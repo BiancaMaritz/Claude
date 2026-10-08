@@ -1,0 +1,155 @@
+"""Render document blocks to Markdown and Word (.docx)."""
+from __future__ import annotations
+
+import re
+
+BOLD = re.compile(r"\*\*(.+?)\*\*")
+PLACEHOLDER = re.compile(r"(\[(?:TO BE COMPLETED|CONFIRM|Screenshot)[^\]]*\])")
+
+
+def _lines(cell):
+    if isinstance(cell, (list, tuple)):
+        return [str(x) for x in cell] or [""]
+    return str(cell).split("\n")
+
+
+# --------------------------------------------------------------- markdown ---
+
+def _md_cell(cell):
+    return "<br>".join(_lines(cell)).replace("|", "\\|") or " "
+
+
+def to_markdown(blocks) -> str:
+    out = []
+    headings = [(b[1], b[2]) for b in blocks if b[0] == "h" and b[1] <= 2]
+    for b in blocks:
+        k = b[0]
+        if k == "title":
+            out.append(f"# {b[1]}\n")
+        elif k == "toc":
+            out.append("## Contents\n")
+            for lvl, t in headings:
+                out.append(f"{'  ' * (lvl - 1)}- [{t}](#{_slug(t)})")
+            out.append("")
+        elif k == "h":
+            out.append(f"{'#' * (b[1] + 1)} {b[2]}\n")
+        elif k in ("p", "todo"):
+            out.append(f"{b[1]}\n")
+        elif k == "ul":
+            out += [f"- {t}" for t in b[1]] + [""]
+        elif k == "table":
+            _, head, rows = b
+            out.append("| " + " | ".join(head) + " |")
+            out.append("|" + "|".join(" --- " for _ in head) + "|")
+            for r in rows:
+                out.append("| " + " | ".join(_md_cell(c) for c in r) + " |")
+            out.append("")
+    return "\n".join(out)
+
+
+def _slug(t):
+    return re.sub(r"[^\w\- ]", "", t.lower()).replace(" ", "-")
+
+
+# ------------------------------------------------------------------- docx ---
+
+def _add_runs(par, text, bold=False):
+    from docx.enum.text import WD_COLOR_INDEX
+
+    for part in PLACEHOLDER.split(text):
+        if not part:
+            continue
+        if PLACEHOLDER.fullmatch(part):
+            r = par.add_run(part)
+            r.font.highlight_color = WD_COLOR_INDEX.YELLOW
+            r.bold = bold
+            continue
+        for i, seg in enumerate(BOLD.split(part)):
+            if seg:
+                r = par.add_run(seg)
+                r.bold = bold or i % 2 == 1
+
+
+def _toc_field(doc):
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    par = doc.add_paragraph()
+    run = par.add_run()
+    for kind, text in (("begin", None), (None, 'TOC \\o "1-2" \\h \\z \\u'), ("separate", None)):
+        if kind:
+            el = OxmlElement("w:fldChar")
+            el.set(qn("w:fldCharType"), kind)
+            if kind == "begin":
+                el.set(qn("w:dirty"), "true")
+        else:
+            el = OxmlElement("w:instrText")
+            el.set(qn("xml:space"), "preserve")
+            el.text = text
+        run._r.append(el)
+    run2 = par.add_run("Right-click and choose Update Field to build the table of contents.")
+    end = OxmlElement("w:fldChar")
+    end.set(qn("w:fldCharType"), "end")
+    run2._r.append(end)
+
+
+def _fit_columns(table, head, rows, total=6.9):
+    """Size columns by typical content length so short ID columns stay narrow."""
+    from docx.shared import Inches
+
+    def weight(i):
+        lens = [max(len(x) for x in _lines(r[i])) for r in rows if i < len(r)] or [6]
+        lens.append(len(head[i]))
+        return min(max(sum(lens) / len(lens), 8), 60)
+
+    w = [weight(i) for i in range(len(head))]
+    table.autofit = False
+    for row in table.rows:
+        for i, cell in enumerate(row.cells):
+            cell.width = Inches(total * w[i] / sum(w))
+
+
+def to_docx(blocks, path):
+    from docx import Document
+    from docx.shared import Pt
+
+    from docx.shared import Inches
+
+    doc = Document()
+    for sec in doc.sections:
+        sec.left_margin = sec.right_margin = Inches(0.8)
+    doc.styles["Normal"].font.name = "Calibri"
+    doc.styles["Normal"].font.size = Pt(10.5)
+    for b in blocks:
+        k = b[0]
+        if k == "title":
+            doc.add_heading(b[1], 0)
+        elif k == "toc":
+            doc.add_heading("Contents", 1)
+            _toc_field(doc)
+        elif k == "h":
+            doc.add_heading(b[2], b[1])
+        elif k in ("p", "todo"):
+            _add_runs(doc.add_paragraph(), b[1])
+        elif k == "ul":
+            for t in b[1]:
+                _add_runs(doc.add_paragraph(style="List Bullet"), t)
+        elif k == "table":
+            _, head, rows = b
+            t = doc.add_table(rows=1, cols=len(head))
+            t.style = "Table Grid"
+            for i, h in enumerate(head):
+                c = t.rows[0].cells[i]
+                c.text = ""
+                _add_runs(c.paragraphs[0], h, bold=True)
+            for r in rows:
+                cells = t.add_row().cells
+                for i, v in enumerate(r):
+                    lines = _lines(v)
+                    cells[i].text = ""
+                    _add_runs(cells[i].paragraphs[0], lines[0])
+                    for ln in lines[1:]:
+                        _add_runs(cells[i].add_paragraph(), ln)
+            _fit_columns(t, head, rows)
+            doc.add_paragraph()
+    doc.save(path)

@@ -1,0 +1,22 @@
+{
+  "title": "Customer Reconnection Automation",
+  "version": "0.1",
+  "process_description": "The bot reads proof-of-payment emails, extracts the payment, and unsuspends the customer account when the balance is cleared.",
+  "moscow": {
+    "must": ["Extract payment details from proof-of-payment PDFs"],
+    "should": ["Duplicate payment check"],
+    "could": [],
+    "wont": ["Scanned or handwritten proofs"]
+  },
+  "assumptions": ["All proofs of payment are machine-readable PDFs."],
+  "functional_requirements": ["Unsuspend the account when the balance is zero or negative."],
+  "success_criteria": ["All valid proofs processed within 1 hour of receipt."],
+  "benefits": [{"benefit": "Enhanced Efficiency", "description": "Removes manual reconnection work."}],
+  "stakeholders": [
+    {"team": "1ai Team", "name": "Jane Doe", "role": "Project Lead", "email": "jane@example.com", "approval": "High"},
+    {"team": "Client Team", "name": "John Roe", "role": "Process Sponsor", "email": "john@example.com", "approval": "High"}
+  ],
+  "changes_by_automation": ["Users no longer reconnect accounts by hand."],
+  "business_rules": [{"id": "BR1", "description": "Payments older than 5 days are rejected."}],
+  "applications": [{"name": "NetSuite", "access": "Full", "bot_username": "SVC_bot@example.com"}]
+}
