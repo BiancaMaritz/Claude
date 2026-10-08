@@ -135,3 +135,41 @@ def test_cli_with_intake_stakeholders(export_dir, tmp_path):
     from docx import Document
     for t in Document(str(out / "SDD.docx")).tables:
         assert len({len(r.cells) for r in t.rows}) == 1
+
+
+def test_web_roundtrip(export_dir, tmp_path):
+    import io
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    from sdd_generator.web import Handler
+
+    z = io.BytesIO()
+    with zipfile.ZipFile(z, "w") as zf:
+        for root, _, files in os.walk(export_dir):
+            for f in files:
+                full = os.path.join(root, f)
+                zf.write(full, os.path.relpath(full, export_dir))
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        b = "XBOUNDARYX"
+        body = (f'--{b}\r\nContent-Disposition: form-data; name="title"\r\n\r\nMy Title\r\n'
+                f'--{b}\r\nContent-Disposition: form-data; name="export"; filename="a b.zip"\r\n'
+                f'Content-Type: application/zip\r\n\r\n').encode() + z.getvalue() + f"\r\n--{b}--\r\n".encode()
+        req = urllib.request.Request(base + "/generate", body,
+                                     {"Content-Type": f"multipart/form-data; boundary={b}"})
+        page = urllib.request.urlopen(req).read().decode()
+        assert "Done" in page and "SDD.docx" in page
+        link = page.split("href='")[1].split("'")[0]
+        assert urllib.request.urlopen(base + link).read()[:2] == b"PK"  # docx is a zip
+        bad = urllib.request.Request(base + "/generate", body.replace(z.getvalue(), b"not a zip"),
+                                     {"Content-Type": f"multipart/form-data; boundary={b}"})
+        with pytest.raises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(bad)
+        assert e.value.code == 400
+    finally:
+        srv.shutdown()

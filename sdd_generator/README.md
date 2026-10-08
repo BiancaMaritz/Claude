@@ -10,6 +10,14 @@ python -m sdd_generator EXPORT.zip --intake sdd_generator/intake.example.json
 
 Outputs in `--out`: `SDD.md`, `SDD.docx` (opens in Google Docs through Drive upload with conversion), `SDD.facts.json` (the parsed facts, for audit).
 
+## Web UI (local)
+
+```bat
+run.bat
+```
+
+On Windows, `run.bat` creates a virtual environment on first run, installs python-docx, and serves the UI at http://localhost:8765/ (bound to 127.0.0.1 only). Elsewhere: `python -m sdd_generator.web`. Upload the zip, optionally an intake JSON, and download `SDD.docx`, `SDD.md` and `SDD.facts.json`. Results are held in memory until the server stops. Use `--port` to change the port.
+
 ## What is filled in from the export
 
 | SDD section | Source |
