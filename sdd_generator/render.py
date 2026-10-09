@@ -153,3 +153,62 @@ def to_docx(blocks, path):
             _fit_columns(t, head, rows)
             doc.add_paragraph()
     doc.save(path)
+
+
+# ------------------------------------------------------------------- html ---
+
+def _h(text) -> str:
+    """Escape, then apply **bold** and highlight placeholders."""
+    import html as _html
+
+    t = _html.escape(str(text))
+    t = BOLD.sub(r"<strong>\1</strong>", t)
+    return re.sub(r"(\[(?:TO BE COMPLETED|CONFIRM|Screenshot)[^\]]*\])", r'<span class="todo">\1</span>', t)
+
+
+def to_html(blocks):
+    """Return (menu, html). menu: [{id, level, text, todo}] for h1/h2 headings.
+
+    todo counts the placeholders still open in that section, so the menu shows what is left.
+    """
+    menu, out = [], []
+    cur = {1: None, 2: None}
+    n = 0
+
+    def cell(c):
+        return "<br>".join(_h(x) for x in _lines(c))
+
+    for b in blocks:
+        k = b[0]
+        todo = 0
+        if k == "title":
+            out.append(f'<h1 class="doc-title">{_h(b[1])}</h1>')
+        elif k == "h":
+            n += 1
+            lvl, text = b[1], b[2]
+            hid = f"s{n}"
+            out.append(f'<h{lvl + 1} id="{hid}">{_h(text)}</h{lvl + 1}>')
+            if lvl <= 2:
+                entry = {"id": hid, "level": lvl, "text": text, "todo": 0}
+                menu.append(entry)
+                cur[lvl] = entry
+                if lvl == 1:
+                    cur[2] = None
+        elif k in ("p", "todo"):
+            out.append(f"<p>{_h(b[1])}</p>")
+            todo = len(PLACEHOLDER.findall(str(b[1])))
+        elif k == "ul":
+            out.append("<ul>" + "".join(f"<li>{_h(t)}</li>" for t in b[1]) + "</ul>")
+            todo = sum(len(PLACEHOLDER.findall(str(t))) for t in b[1])
+        elif k == "table":
+            _, head, rows = b
+            body = "".join("<tr>" + "".join(f"<td>{cell(c)}</td>" for c in r) + "</tr>" for r in rows)
+            out.append('<div class="tw"><table><thead><tr>' + "".join(f"<th>{_h(x)}</th>" for x in head)
+                       + f"</tr></thead><tbody>{body}</tbody></table></div>")
+            todo = sum(len(PLACEHOLDER.findall(x)) for r in rows for c in r for x in _lines(c)
+                       if "Screenshot" not in x)
+        if todo:
+            for lvl in (1, 2):
+                if cur[lvl]:
+                    cur[lvl]["todo"] += todo
+    return menu, "\n".join(out)

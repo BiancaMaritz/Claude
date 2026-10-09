@@ -10,13 +10,23 @@ python -m sdd_generator EXPORT.zip --intake sdd_generator/intake.example.json
 
 Outputs in `--out`: `SDD.md`, `SDD.docx` (opens in Google Docs through Drive upload with conversion), `SDD.facts.json` (the parsed facts, for audit).
 
-## Web UI (local)
+## Web app (local)
 
 ```bat
 run.bat
 ```
 
-On Windows, `run.bat` creates a virtual environment on first run, installs python-docx, and serves the UI at http://localhost:8765/ (bound to 127.0.0.1 only). Elsewhere: `python -m sdd_generator.web`. Upload the zip, optionally an intake JSON, and download `SDD.docx`, `SDD.md` and `SDD.facts.json`. Results are held in memory until the server stops. Use `--port` to change the port.
+Opens http://localhost:8765/ (bound to 127.0.0.1 only). Elsewhere: `python -m sdd_generator.web [--port N] [--data-dir DIR]`.
+
+- **Left:** document picker, a Load files panel, and the section menu. Each section shows how many placeholders are still open.
+- **Right:** the expected SDD, rendered from the stored document. Click a menu item to jump to that section.
+- **Load files:** one or more export `.zip` files and an optional intake `.json`.
+  - **Add to document:** merges bots into the stored document. A bot with the same path replaces the old one; a manifest-only record never erases bot logic already stored. Intake files merge (lists append without duplicates, other values are replaced).
+  - **Overwrite document:** the document restarts from the files you load. You are asked to confirm.
+  - Each load reports bots added, updated, unchanged and removed, and is kept in the load history.
+- **Download:** Word (.docx) or Markdown (.md) of exactly what the preview shows.
+
+Documents are stored as JSON in `data/documents/` next to the package (override with `--data-dir`). They contain the bot logic from your exports, so keep that folder out of git (it is in `.gitignore`).
 
 ## What is filled in from the export
 
