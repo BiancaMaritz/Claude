@@ -180,57 +180,6 @@ def test_add_keeps_logic_when_manifest_only_arrives(export_dir, tmp_path):
     assert all(b.data is not None for b in ex.bots.values())
 
 
-def test_web_api(export_dir, tmp_path):
-    import threading
-    import urllib.error
-    import urllib.request
-    from http.server import ThreadingHTTPServer
-
-    from sdd_generator.web import App, make_handler
-
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), None)
-    port = srv.server_address[1]
-    srv.RequestHandlerClass = make_handler(App(str(tmp_path / "docs")), port)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{port}"
-    b = "XBX"
-
-    def post(fields, files):
-        body = b""
-        for k, v in fields.items():
-            body += f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode()
-        for fname, data in files:
-            body += (f'--{b}\r\nContent-Disposition: form-data; name="files"; filename="{fname}"\r\n'
-                     f'Content-Type: application/octet-stream\r\n\r\n').encode() + data + b"\r\n"
-        body += f"--{b}--\r\n".encode()
-        req = urllib.request.Request(base + "/api/load", body,
-                                     {"Content-Type": f"multipart/form-data; boundary={b}"})
-        return json.loads(urllib.request.urlopen(req).read())
-
-    try:
-        assert b"SDD Generator" in urllib.request.urlopen(base + "/").read()
-        j = post({"doc": "My Doc", "mode": "add", "title": "T"}, [("a b.zip", zip_of(export_dir)),
-                                                                  ("intake.json", b'{"assumptions": ["A1"]}')])
-        assert j["report"]["added"] == 5 and j["report"]["intake"] == 1
-        d = json.loads(urllib.request.urlopen(base + "/api/doc?name=My%20Doc").read())
-        assert d["title"] == "T" and "A1" in d["html"] and d["menu"][0]["text"].startswith("1.")
-        assert urllib.request.urlopen(base + "/download/My%20Doc/docx").read()[:2] == b"PK"
-        assert b"# T" in urllib.request.urlopen(base + "/download/My%20Doc/md").read()
-        for bad in ([("x.txt", b"hi")], [("bad.zip", b"not a zip")], [("m.json", b'{"files": []}')]):
-            with pytest.raises(urllib.error.HTTPError) as e:
-                post({"doc": "My Doc", "mode": "add"}, bad)
-            assert e.value.code == 400
-        with pytest.raises(urllib.error.HTTPError):  # path traversal in the name
-            post({"doc": "../evil", "mode": "add"}, [("a.zip", zip_of(export_dir))])
-        req = urllib.request.Request(base + "/api/delete", b'{"name": "My Doc"}', {"Origin": "http://evil.example"})
-        with pytest.raises(urllib.error.HTTPError) as e:  # cross-site request is refused
-            urllib.request.urlopen(req)
-        assert e.value.code == 403
-        assert json.loads(urllib.request.urlopen(base + "/api/docs").read())[0]["bots"] == 5
-    finally:
-        srv.shutdown()
-
-
 def test_reload_same_content_is_detected(export_dir, tmp_path):
     from sdd_generator.store import Store
     from sdd_generator.web import classify
@@ -291,37 +240,103 @@ def test_binaries_are_never_read(export_dir, tmp_path, monkeypatch):
     assert not any(str(n).endswith(".jar") for n in read)
 
 
-def test_web_load_from_path(export_dir, tmp_path):
-    import threading
-    import urllib.request
-    from http.server import ThreadingHTTPServer
+class Client:
+    """Drives the real HTTP server the way the browser does: stage files, then load."""
 
-    from sdd_generator.web import App, make_handler
+    def __init__(self, tmp_path):
+        import threading
+        from http.server import ThreadingHTTPServer
 
-    z = tmp_path / "big export.zip"
-    z.write_bytes(zip_of(export_dir))
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), None)
-    port = srv.server_address[1]
-    srv.RequestHandlerClass = make_handler(App(str(tmp_path / "docs")), port)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
+        from sdd_generator.web import App, make_handler
 
-    def load(path):
-        b = "XB"
-        body = "".join(f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'
-                       for k, v in {"doc": "P", "mode": "add", "paths": path}.items()) + f"--{b}--\r\n"
-        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/load", body.encode(),
-                                     {"Content-Type": f"multipart/form-data; boundary={b}"})
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), None)
+        self.port = self.srv.server_address[1]
+        self.app = App(str(tmp_path / "docs"))
+        self.srv.RequestHandlerClass = make_handler(self.app, self.port)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.port}"
+
+    def call(self, method, url, body=None, headers=None):
+        import urllib.error
+        import urllib.request
+
+        req = urllib.request.Request(self.base + url, body, headers or {}, method=method)
         try:
-            return json.loads(urllib.request.urlopen(req).read())
+            with urllib.request.urlopen(req) as r:
+                return r.status, r.read()
         except urllib.error.HTTPError as e:
-            return json.loads(e.read())
+            return e.code, e.read()
 
-    try:
-        assert load(f'"{z}"')["report"]["added"] == 5          # Windows "Copy as path" adds quotes
-        assert load(str(z))["report"]["noop"] is True          # same file again
-        assert load(str(export_dir))["report"]["already_loaded"] == []  # a folder is a different source
-        assert "not found" in load(str(tmp_path / "nope.zip"))["error"]
-        (tmp_path / "notes.txt").write_text("hi")
-        assert "give a .zip" in load(str(tmp_path / "notes.txt"))["error"]
-    finally:
-        srv.shutdown()
+    def stage(self, name, data):
+        import urllib.parse
+
+        code, body = self.call("POST", "/api/stage?name=" + urllib.parse.quote(name), data)
+        return code, json.loads(body)
+
+    def load(self, doc, files=(), paths="", mode="add", title=""):
+        tokens = []
+        for name, data in files:
+            code, j = self.stage(name, data)
+            if code != 200:
+                return code, j
+            tokens.append(j["token"])
+        code, body = self.call("POST", "/api/load", json.dumps(
+            {"doc": doc, "mode": mode, "title": title, "paths": paths, "staged": tokens}).encode(),
+            {"Content-Type": "application/json"})
+        return code, json.loads(body)
+
+
+@pytest.fixture
+def client(tmp_path):
+    c = Client(tmp_path)
+    yield c
+    c.srv.shutdown()
+
+
+def test_web_api(export_dir, client):
+    assert b"SDD Generator" in client.call("GET", "/")[1]
+    code, j = client.load("My Doc", [("a b.zip", zip_of(export_dir)), ("intake.json", b'{"assumptions": ["A1"]}')], title="T")
+    assert code == 200 and j["report"]["added"] == 5 and j["report"]["intake"] == 1
+    d = json.loads(client.call("GET", "/api/doc?name=My%20Doc")[1])
+    assert d["title"] == "T" and "A1" in d["html"] and d["menu"][0]["text"].startswith("1.")
+    assert client.call("GET", "/download/My%20Doc/docx")[1][:2] == b"PK"
+    assert b"# T" in client.call("GET", "/download/My%20Doc/md")[1]
+    for bad in ([("x.txt", b"hi")], [("bad.zip", b"not a zip")], [("m.json", b'{"files": []}')]):
+        code, j = client.load("My Doc", bad)
+        assert code == 400 and j["error"]
+    assert client.load("../evil", [("a.zip", zip_of(export_dir))])[0] == 400  # path traversal in the name
+    code, _ = client.call("POST", "/api/delete", b'{"name": "My Doc"}', {"Origin": "http://evil.example"})
+    assert code == 403  # cross-site request is refused
+    assert json.loads(client.call("GET", "/api/docs")[1])[0]["bots"] == 5
+    assert not os.listdir(client.app.staging)  # staged uploads are removed after the load
+
+
+def test_large_upload_streams_to_disk(export_dir, client):
+    # An export that carries a 150 MB jar, as real ones do. It is uploaded in chunks to disk,
+    # and the loader then skips the jar without reading it.
+    import io
+
+    z = io.BytesIO()
+    with zipfile.ZipFile(z, "w", zipfile.ZIP_STORED) as zf:
+        for root, _, files in os.walk(export_dir):
+            for f in files:
+                full = os.path.join(root, f)
+                zf.write(full, os.path.relpath(full, export_dir))
+        zf.writestr("packages/big.jar", b"\0" * (150 * 1024 * 1024))
+    code, j = client.stage("big.zip", z.getvalue())
+    assert code == 200 and j["size"] > 150 * 1024 * 1024
+    assert os.path.getsize(client.app._staged[j["token"]][1]) == j["size"]
+    code, body = client.call("POST", "/api/load", json.dumps({"doc": "L", "staged": [j["token"]]}).encode(),
+                             {"Content-Type": "application/json"})
+    assert code == 200 and json.loads(body)["report"]["added"] == 5
+
+
+def test_web_load_from_path(export_dir, tmp_path, client):
+    z = tmp_path / "big export.zip"
+    z.write_bytes(zip_of(export_dir, skip=("big export.zip",)))
+    assert client.load("P", paths=f'"{z}"')[1]["report"]["added"] == 5   # Windows "Copy as path" adds quotes
+    assert client.load("P", paths=str(z))[1]["report"]["noop"] is True    # same file again
+    assert client.load("P", paths=str(export_dir))[1]["report"]["already_loaded"] == []  # a folder is another source
+    assert "not found" in client.load("P", paths=str(tmp_path / "nope.zip"))[1]["error"]
+    (tmp_path / "notes.txt").write_text("hi")
+    assert "give a .zip" in client.load("P", paths=str(tmp_path / "notes.txt"))[1]["error"]

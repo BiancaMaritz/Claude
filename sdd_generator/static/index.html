@@ -70,9 +70,9 @@ main details{max-width:980px;margin:0 auto 40px;padding:0 4px;color:var(--mut);f
       <label><input type="radio" name="mode" value="add" checked><span>Add to document<small>Merge bots into what is already there. Same bot path: the new one replaces it.</small></span></label>
       <label><input type="radio" name="mode" value="overwrite"><span>Overwrite document<small>Start the document again from these files only.</small></span></label>
     </div>
-    <label for="files">Export .zip file(s) and optional intake .json</label>
+    <label for="files">Export .zip file(s) and optional intake .json (any size)</label>
     <input id="files" type="file" multiple accept=".zip,.json">
-    <label for="paths">Or load from a path on this computer (.zip, export folder or .json). No size limit.</label>
+    <label for="paths">Or load from a path on this computer (.zip, export folder or .json). Fastest for large exports.</label>
     <textarea id="paths" rows="2" placeholder="C:\Exports\Herotel.zip"></textarea>
     <label for="title">Title (optional)</label>
     <input id="title" type="text" placeholder="Document title" maxlength="120">
@@ -184,19 +184,33 @@ $("newOk").addEventListener("click", async () => {
   $("bar").hidden = true; $("menu").replaceChildren(); say("");
 });
 
+function stage(file, label) {
+  // Streams the file to the local server in chunks; works for multi-gigabyte exports.
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", "/api/stage?name=" + encodeURIComponent(file.name));
+    x.upload.onprogress = e => { if (e.lengthComputable) say(`${label}: uploading ${file.name} ${Math.round(100 * e.loaded / e.total)}% of ${(file.size / 1048576).toFixed(0)} MB`); };
+    x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch (e) {} x.status === 200 ? resolve(j) : reject(new Error(j.error || "Upload failed (" + x.status + ")")); };
+    x.onerror = () => reject(new Error("Lost the connection to the app while uploading. Check that run.bat is still running, or use Load from path."));
+    x.send(file);
+  });
+}
+
 $("loadBtn").addEventListener("click", async () => {
-  const files = $("files").files, paths = $("paths").value.trim();
+  const files = [...$("files").files], paths = $("paths").value.trim();
   if (!current) { say("Create a document first.", "err"); return; }
   if (!files.length && !paths) { say("Choose a file or enter a path.", "err"); return; }
+  const bad = files.find(f => !/\.(zip|json)$/i.test(f.name));
+  if (bad) { say(bad.name + ": only .zip exports and .json intake files are supported.", "err"); return; }
   const mode = document.querySelector('input[name=mode]:checked').value;
   if (mode === "overwrite" && !confirm(`Overwrite "${current}"? Its stored bots and intake will be replaced by these files.`)) return;
-  const fd = new FormData();
-  fd.append("doc", current); fd.append("mode", mode); fd.append("title", $("title").value.trim());
-  fd.append("paths", paths);
-  for (const f of files) fd.append("files", f, f.name);
   $("loadBtn").disabled = true; say("Loading..."); $("detail").replaceChildren();
   try {
-    const j = await api("/api/load", {method: "POST", body: fd});
+    const staged = [];
+    for (const [i, f] of files.entries()) staged.push((await stage(f, `File ${i + 1} of ${files.length}`)).token);
+    say("Reading the export...");
+    const body = JSON.stringify({doc: current, mode, title: $("title").value.trim(), paths, staged});
+    const j = await api("/api/load", {method: "POST", body, headers: {"Content-Type": "application/json"}});
     const r = j.report;
     const seen = r.already_loaded.length ? ` Already loaded before: ${r.already_loaded.join(", ")}.` : "";
     if (r.noop) say(`No changes: this content is already in "${j.name}" (${r.unchanged} bots identical).` + seen, "ok");
@@ -210,7 +224,7 @@ $("loadBtn").addEventListener("click", async () => {
     }
     $("files").value = ""; $("paths").value = ""; $("title").value = "";
     await refreshDocs(j.name);
-  } catch (e) { say(e.message, "err"); }
+  } catch (e) { say(e.message === "Failed to fetch" ? "Cannot reach the app. Check that run.bat is still running." : e.message, "err"); }
   finally { $("loadBtn").disabled = false; }
 });
 

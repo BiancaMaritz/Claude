@@ -10,11 +10,11 @@ import datetime
 import hashlib
 import json
 import os
+import secrets
+import shutil
 import tempfile
 import threading
 import webbrowser
-from email.parser import BytesParser
-from email.policy import default as email_policy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -24,21 +24,9 @@ from .loader import load_export
 from .render import to_docx, to_html, to_markdown
 from .store import Store, export_from_dict, valid_name
 
-MAX_UPLOAD = 300 * 1024 * 1024  # larger exports are read from a local path instead
+CHUNK = 1024 * 1024
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 DEFAULT_DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "documents")
-
-
-def parse_multipart(headers, body: bytes) -> list:
-    """Return [(field, filename|None, bytes)] from a multipart/form-data body."""
-    raw = b"Content-Type: " + headers["Content-Type"].encode() + b"\r\nMIME-Version: 1.0\r\n\r\n" + body
-    msg = BytesParser(policy=email_policy).parsebytes(raw)
-    out = []
-    for part in msg.iter_parts():
-        name = part.get_param("name", header="content-disposition")
-        if name:
-            out.append((name, part.get_filename(), part.get_payload(decode=True) or b""))
-    return out
 
 
 def _load_zip_or_dir(label, source):
@@ -62,14 +50,27 @@ def _parse_intake(label, data: bytes):
     return d
 
 
-def classify(uploads, paths):
-    """Turn uploaded files and local paths into (exports, intakes, names, sources).
+def classify(uploads, paths, staged=()):
+    """Turn uploaded bytes, staged files and local paths into (exports, intakes, names, sources).
 
-    uploads: [(filename, bytes)]. paths: local file or folder paths read straight from disk, so
-    size is limited only by the disk. sources: [{name, fp}] identifying each file's content.
+    uploads: [(filename, bytes)]. staged: [(label, path)] files the browser streamed to disk.
+    paths: local file or folder paths. Everything except `uploads` is read from disk, so size is
+    limited only by the disk. sources: [{name, fp}] identifying each file's content.
     Raises ValueError with a clear reason.
     """
     exports, intakes, names, sources = [], [], [], []
+
+    def add_export(label, source):
+        ex = _load_zip_or_dir(label, source)
+        exports.append(ex)
+        sources.append({"name": label, "fp": ex.fingerprint})
+        names.append(label)
+
+    def add_intake(label, data):
+        intakes.append(_parse_intake(label, data))
+        sources.append({"name": label, "fp": hashlib.sha256(data).hexdigest()})
+        names.append(label)
+
     for fname, data in uploads:
         low = fname.lower()
         if low.endswith(".zip"):
@@ -77,32 +78,25 @@ def classify(uploads, paths):
                 path = os.path.join(tmp, "export.zip")
                 with open(path, "wb") as fh:
                     fh.write(data)
-                ex = _load_zip_or_dir(fname, path)
-            exports.append(ex)
-            sources.append({"name": fname, "fp": ex.fingerprint})
+                add_export(fname, path)
         elif low.endswith(".json"):
-            intakes.append(_parse_intake(fname, data))
-            sources.append({"name": fname, "fp": hashlib.sha256(data).hexdigest()})
+            add_intake(fname, data)
         else:
             raise ValueError(f"{fname}: only .zip exports and .json intake files are supported.")
-        names.append(fname)
+    items = [(label, path) for label, path in staged]
     for raw in paths:
         path = raw.strip().strip('"').strip("'")
-        label = os.path.basename(path.rstrip("\\/")) or path
+        items.append((os.path.basename(path.rstrip("\\/")) or path, path))
+    for label, path in items:
         if not os.path.exists(path):
-            raise ValueError(f"{path}: not found on this machine.")
-        if os.path.isdir(path) or path.lower().endswith(".zip"):
-            ex = _load_zip_or_dir(label, path)
-            exports.append(ex)
-            sources.append({"name": label, "fp": ex.fingerprint})
-        elif path.lower().endswith(".json"):
+            raise ValueError(f"{label}: not found on this machine.")
+        if os.path.isdir(path) or label.lower().endswith(".zip"):
+            add_export(label, path)
+        elif label.lower().endswith(".json"):
             with open(path, "rb") as fh:
-                data = fh.read()
-            intakes.append(_parse_intake(label, data))
-            sources.append({"name": label, "fp": hashlib.sha256(data).hexdigest()})
+                add_intake(label, fh.read())
         else:
-            raise ValueError(f"{path}: give a .zip export, an extracted export folder, or a .json intake file.")
-        names.append(label)
+            raise ValueError(f"{label}: give a .zip export, an extracted export folder, or a .json intake file.")
     return exports, intakes, names, sources
 
 
@@ -114,6 +108,46 @@ class App:
     def __init__(self, data_dir):
         self.store = Store(data_dir)
         self._cache = {}
+        self.staging = os.path.join(os.path.dirname(os.path.abspath(data_dir)), "staging")
+        shutil.rmtree(self.staging, ignore_errors=True)  # leftovers from a previous run
+        os.makedirs(self.staging)
+        self._staged = {}  # token -> (label, path)
+
+    def stage(self, label, rfile, length):
+        """Stream an upload to disk in chunks, so file size never depends on memory."""
+        ext = os.path.splitext(label)[1].lower()
+        if ext not in (".zip", ".json"):
+            raise ValueError(f"{label}: only .zip exports and .json intake files are supported.")
+        token = secrets.token_hex(8)
+        path = os.path.join(self.staging, token + ext)
+        left = length
+        with open(path, "wb") as fh:
+            while left > 0:
+                chunk = rfile.read(min(CHUNK, left))
+                if not chunk:
+                    break
+                fh.write(chunk)
+                left -= len(chunk)
+        if left:
+            os.remove(path)
+            raise ValueError(f"{label}: upload was interrupted.")
+        self._staged[token] = (label, path)
+        return token
+
+    def take_staged(self, tokens):
+        """Resolve tokens to [(label, path)]; unknown tokens are an error."""
+        out = []
+        for t in tokens:
+            if t not in self._staged:
+                raise ValueError("An uploaded file has expired. Choose it again.")
+            out.append(self._staged[t])
+        return out
+
+    def drop_staged(self, tokens):
+        for t in tokens:
+            _, path = self._staged.pop(t, (None, None))
+            if path and os.path.exists(path):
+                os.remove(path)
 
     def generate(self, name):
         """Return (doc, blocks, analysis) for a stored document, or None."""
@@ -201,30 +235,35 @@ def make_handler(app: App, port: int):
         def do_POST(self):
             if not self._same_origin():
                 return self._json({"error": "Forbidden"}, 403)
+            u = urlparse(self.path)
             length = int(self.headers.get("Content-Length") or 0)
-            if not 0 < length <= MAX_UPLOAD:
-                return self._json({"error": "Upload is empty or larger than 300 MB. For large exports use "
-                                              "Load from path: the app reads the file from disk without uploading it."}, 400)
-            body = self.rfile.read(length)
             try:
-                if self.path == "/api/load":
-                    parts = parse_multipart(self.headers, body)
-                    field = {n: d.decode("utf-8").strip() for n, f, d in parts if f is None}
-                    name = field.get("doc", "")
-                    if not valid_name(name):
-                        raise ValueError("Document name must be 1 to 60 letters, digits, spaces, dot, dash or underscore.")
-                    files = [(f, d) for n, f, d in parts if n == "files" and f]
-                    paths = [x for x in field.get("paths", "").splitlines() if x.strip()]
-                    if not files and not paths:
-                        raise ValueError("Choose a file or give a path to a .zip export, export folder or .json intake.")
-                    exports, intakes, names, sources = classify(files, paths)
-                    report = app.store.load(name, field.get("mode", "add"), exports, intakes, names,
-                                            title=field.get("title") or None, sources=sources)
+                if u.path == "/api/stage":
+                    label = os.path.basename((parse_qs(u.query).get("name") or [""])[0])
+                    if not label or length <= 0:
+                        raise ValueError("Empty upload.")
+                    token = app.stage(label, self.rfile, length)
+                    return self._json({"token": token, "name": label, "size": length})
+                body = self.rfile.read(length) if 0 < length <= 1_000_000 else b""
+                if u.path == "/api/load":
+                    req = json.loads(body or b"{}")
+                    tokens = [str(t) for t in req.get("staged", [])]
+                    try:  # staged uploads are always removed, whether or not the load succeeds
+                        name = str(req.get("doc", "")).strip()
+                        if not valid_name(name):
+                            raise ValueError("Document name must be 1 to 60 letters, digits, spaces, dot, dash or underscore.")
+                        paths = [x for x in str(req.get("paths", "")).splitlines() if x.strip()]
+                        if not tokens and not paths:
+                            raise ValueError("Choose a file or give a path to a .zip export, export folder or .json intake.")
+                        exports, intakes, names, sources = classify([], paths, app.take_staged(tokens))
+                        report = app.store.load(name, str(req.get("mode", "add")), exports, intakes, names,
+                                                title=str(req.get("title", "")).strip() or None, sources=sources)
+                    finally:
+                        app.drop_staged(tokens)
                     return self._json({"ok": True, "name": name, "report": report})
-                if self.path == "/api/delete":
-                    name = json.loads(body).get("name", "")
-                    return self._json({"ok": app.store.delete(name)})
-            except ValueError as e:
+                if u.path == "/api/delete":
+                    return self._json({"ok": app.store.delete(json.loads(body or b"{}").get("name", ""))})
+            except (ValueError, KeyError) as e:
                 return self._json({"error": str(e)}, 400)
             self._json({"error": "Not found."}, 404)
 
