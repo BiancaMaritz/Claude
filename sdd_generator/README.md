@@ -29,6 +29,15 @@ Opens http://localhost:8765/ (bound to 127.0.0.1 only). Elsewhere: `python -m sd
 
 Documents are stored as JSON in `data/documents/` next to the package (override with `--data-dir`). They contain the bot logic from your exports, so keep that folder out of git (it is in `.gitignore`).
 
+### If the page behaves like an old version
+
+The page header shows the version (currently 0.3.0). If it does not, or you see a bare "Failed to fetch", an older copy of the app is still running and holding port 8765, so the new one could not start. `run.bat` now says so and waits; to clear the old one on Windows:
+
+```bat
+netstat -ano | findstr :8765
+taskkill /PID <number in the last column> /F
+```
+
 ## What is filled in from the export
 
 | SDD section | Source |

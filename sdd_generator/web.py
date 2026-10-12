@@ -18,6 +18,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
+from . import __version__
 from .analyze import analyse
 from .document import build
 from .loader import load_export
@@ -196,7 +197,7 @@ def make_handler(app: App, port: int):
                 return self._send(204, b"", "image/x-icon")
             if path == "/":
                 with open(os.path.join(STATIC, "index.html"), "rb") as fh:
-                    return self._send(200, fh.read())
+                    return self._send(200, fh.read().replace(b"@@VERSION@@", __version__.encode()))
             if path == "/api/docs":
                 return self._json(app.store.list())
             if path == "/api/doc":
@@ -279,9 +280,20 @@ def main(argv=None):
     ap.add_argument("--data-dir", default=DEFAULT_DATA, help="where documents are stored")
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args(argv)
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(App(args.data_dir), args.port))
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", args.port), BaseHTTPRequestHandler)
+    except OSError as e:
+        print(f"\nCannot start: port {args.port} is not available ({e.strerror or e}).\n"
+              f"An older copy of this app is probably still running and is what your browser is showing.\n"
+              f"Close its window, or on Windows run:  netstat -ano | findstr :{args.port}\n"
+              f"then:  taskkill /PID <the number in the last column> /F\n"
+              f"Or start this one on another port:  run.bat --port {args.port + 1}")
+        return 1
+    # Only after the port is ours: building the app clears the staging folder, which a copy
+    # that is already running may still be using.
+    server.RequestHandlerClass = make_handler(App(args.data_dir), args.port)
     url = f"http://localhost:{args.port}/"
-    print(f"SDD Generator running at {url}\nDocuments stored in {args.data_dir}\nCtrl+C to stop")
+    print(f"SDD Generator v{__version__} running at {url}\nDocuments stored in {args.data_dir}\nCtrl+C to stop")
     if not args.no_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:
@@ -293,4 +305,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

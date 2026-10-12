@@ -1,3 +1,3 @@
 """Deterministic SDD generator for Automation Anywhere (A360) bot exports."""
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"

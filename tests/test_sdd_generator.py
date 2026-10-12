@@ -340,3 +340,21 @@ def test_web_load_from_path(export_dir, tmp_path, client):
     assert "not found" in client.load("P", paths=str(tmp_path / "nope.zip"))[1]["error"]
     (tmp_path / "notes.txt").write_text("hi")
     assert "give a .zip" in client.load("P", paths=str(tmp_path / "notes.txt"))[1]["error"]
+
+
+def test_page_shows_version_and_port_clash_is_explained(client, capsys, tmp_path):
+    import socket
+
+    from sdd_generator import __version__
+    from sdd_generator.web import main
+
+    assert f"Version {__version__}".encode() in client.call("GET", "/")[1]
+    held = socket.socket()
+    held.bind(("127.0.0.1", 0))
+    held.listen()
+    try:
+        assert main(["--port", str(held.getsockname()[1]), "--no-browser", "--data-dir", str(tmp_path / "x" / "d")]) == 1
+    finally:
+        held.close()
+    assert "older copy" in capsys.readouterr().out
+    assert not (tmp_path / "x").exists()  # a failed start must not touch a running copy's files

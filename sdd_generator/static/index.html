@@ -56,7 +56,7 @@ main details{max-width:980px;margin:0 auto 40px;padding:0 4px;color:var(--mut);f
 <body>
 <div class="app">
 <aside>
-  <div><h1 class="brand">SDD Generator</h1><p class="sub">Automation Anywhere export to Solution Design Document</p></div>
+  <div><h1 class="brand">SDD Generator</h1><p class="sub">Automation Anywhere export to Solution Design Document</p><p class="sub">Version @@VERSION@@</p></div>
 
   <div class="box">
     <h2>Document</h2>
@@ -191,7 +191,7 @@ function stage(file, label) {
     x.open("POST", "/api/stage?name=" + encodeURIComponent(file.name));
     x.upload.onprogress = e => { if (e.lengthComputable) say(`${label}: uploading ${file.name} ${Math.round(100 * e.loaded / e.total)}% of ${(file.size / 1048576).toFixed(0)} MB`); };
     x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch (e) {} x.status === 200 ? resolve(j) : reject(new Error(j.error || "Upload failed (" + x.status + ")")); };
-    x.onerror = () => reject(new Error("Lost the connection to the app while uploading. Check that run.bat is still running, or use Load from path."));
+    x.onerror = () => reject(new Error("The upload failed. Check that run.bat is still running. If the file is in OneDrive, make sure it is stored on this device (right-click, Always keep on this device), or paste its path under Load from a path."));
     x.send(file);
   });
 }
