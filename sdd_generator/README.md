@@ -3,7 +3,7 @@
 Reads an A360 bot export (zip or extracted folder) and drafts a Solution Design Document in the standard SDD layout. Deterministic: no network access and no LLM. Every derived fact comes from a specific node in the export.
 
 ```bash
-pip install python-docx
+pip install -r sdd_generator/requirements.txt
 python -m sdd_generator EXPORT.zip --out out --title "My Process"
 python -m sdd_generator EXPORT.zip --intake sdd_generator/intake.example.json
 ```
@@ -18,16 +18,28 @@ run.bat
 
 Opens http://localhost:8765/ (bound to 127.0.0.1 only). Elsewhere: `python -m sdd_generator.web [--port N] [--data-dir DIR]`.
 
-- **Left:** document picker, a Load files panel, and the section menu. Each section shows how many placeholders are still open.
-- **Right:** the expected SDD, rendered from the stored document. Click a menu item to jump to that section.
-- **Load files:** one or more export `.zip` files and an optional intake `.json`, either chosen in the browser (streamed to disk in chunks, so size is limited only by disk space) or given as a **path on this computer** (a `.zip`, an extracted export folder, or a `.json`). A path skips the upload step entirely, so it is the fastest way to load a large export. Only bot and manifest JSON is read; jars, screenshots and other binaries are skipped without being opened, so a multi-gigabyte export loads in well under a second.
-  - **Add to document:** merges bots into the stored document. A bot with the same path replaces the old one; a manifest-only record never erases bot logic already stored. Intake files merge (lists append without duplicates, other values are replaced).
-  - **Overwrite document:** the document restarts from the files you load. You are asked to confirm.
-  - Each load reports bots added, updated, unchanged and removed (with the names of the changed ones), and is kept in the load history.
-  - **Reloading the same content is detected.** Zips are identified by the size and CRC of their entries, folders by file hashes, so renaming or moving a file does not fool it. If a load changes nothing the app says "No changes", writes nothing and adds no history entry. Reloading an older version still applies it, because the document may have moved on since.
+**Left:** the document picker, two input menus (**Current Code** and **Documentation**), and the section menu. Each section shows how many placeholders are still open (yellow) and how many passages came from documentation (blue). **Right:** the expected SDD. Click a menu item to jump to that section.
+
+**Priority.** What the code shows always wins. Next comes intake you typed in. Documentation only fills what would otherwise be `[TO BE COMPLETED]` or missing, and every passage from it sits under a blue *From documentation: file, page N* caption, because it was not verified against the code.
+
+- **Current Code:** one or more export `.zip` files, chosen in the browser (streamed to disk in chunks, so size is limited only by disk space) or given as a path on this computer (a `.zip` or an extracted export folder; fastest for large exports). Only bot and manifest JSON is read, so a multi-gigabyte export loads in well under a second.
+  - **Add:** merges bots into the stored code. A bot at the same path is replaced; a manifest-only record never erases bot logic already stored.
+  - **Overwrite:** restarts the code from the files you load. Documentation and intake are kept.
+  - **Reloading the same content is detected.** Zips are identified by the size and CRC of their entries, folders by file hashes, so renaming or moving a file does not fool it. A load that changes nothing says "No changes", writes nothing and adds no history entry. Loading an older version still applies it.
+- **Documentation:** old SDDs as `.pdf`, `.docx` or `.md`, several at once, or a folder of them, plus an optional intake `.json` (see `intake.example.json`). Sections are recognised by title, whatever the numbering, so differently structured SDDs work. Text and tables are read; screenshots and diagrams are not.
+  - **Add:** keeps what is stored. The same file again changes nothing; a file with the same name but new content replaces the old copy.
+  - **Overwrite:** replaces all stored documentation and intake. Code is never touched.
+  - **Remove** takes one file out. Documentation can be loaded before, after or without code.
+  - What it fills: process description, MoSCoW, assumptions, requirements, success criteria, benefits, stakeholders, changes, business rules, ERD text. It also adds a documented process flow, documented triggers and reports, access and bot usernames for matching applications, and a list of documented bots not found in the code. Appendix G records what was read from each file and what was used.
 - **Download:** Word (.docx) or Markdown (.md) of exactly what the preview shows.
 
-Documents are stored as JSON in `data/documents/` next to the package (override with `--data-dir`). They contain the bot logic from your exports, so keep that folder out of git (it is in `.gitignore`).
+### Where your data lives
+
+Everything you load is stored automatically, as soon as you load it, in `C:\Dev\sdd-generator\data\documents` (set by `run.bat` through `SDD_DATA_DIR`; the page shows the folder in use). You never need to load anything again. Every save keeps the previous version in `backups\<document>\` (the last 10), and deleting a document leaves a copy there too. Documents stored beside the code by older versions are copied across once, automatically.
+
+### Updates
+
+If `C:\Dev\sdd-generator` is a git clone, `run.bat` runs `git pull --ff-only` before starting, and installs any new requirements, so new versions arrive on the next start. Your data folder is not in git (`.gitignore`) and is never touched by a pull.
 
 ### If the page behaves like an old version
 

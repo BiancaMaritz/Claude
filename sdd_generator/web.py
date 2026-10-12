@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from . import __version__
 from .analyze import analyse
+from .docparse import parse_document
 from .document import build
 from .loader import load_export
 from .render import to_docx, to_html, to_markdown
@@ -27,7 +28,10 @@ from .store import Store, export_from_dict, valid_name
 
 CHUNK = 1024 * 1024
 STATIC = os.path.join(os.path.dirname(__file__), "static")
-DEFAULT_DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "documents")
+DOC_EXT = (".pdf", ".docx", ".md", ".txt")
+# SDD_DATA_DIR keeps stored documents in one fixed place, whichever folder the code is run from.
+DEFAULT_DATA = os.environ.get("SDD_DATA_DIR") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "documents")
 
 
 def _load_zip_or_dir(label, source):
@@ -105,6 +109,38 @@ def classify_uploads(files):
     return classify(files, [])
 
 
+def classify_docs(staged, paths):
+    """Documentation files and intake JSON from staged uploads and local paths.
+
+    Returns (parsed documents, intake dicts). A folder path contributes every documentation file
+    inside it. Raises ValueError with a clear reason.
+    """
+    items = list(staged)
+    for raw in paths:
+        path = raw.strip().strip('"').strip("'")
+        if not os.path.exists(path):
+            raise ValueError(f"{path}: not found on this machine.")
+        if os.path.isdir(path):
+            found = sorted(os.path.join(r, f) for r, _, fs in os.walk(path) for f in fs
+                           if f.lower().endswith(DOC_EXT) and not f.startswith("."))
+            if not found:  # .json is never picked up from a folder: it may be anything, so name it explicitly
+                raise ValueError(f"{path}: no .pdf, .docx or .md files in that folder.")
+            items += [(os.path.basename(f), f) for f in found[:200]]
+        else:
+            items.append((os.path.basename(path), path))
+    parsed, intakes = [], []
+    for label, path in items:
+        low = label.lower()
+        if low.endswith(DOC_EXT):
+            parsed.append(parse_document(path, label))
+        elif low.endswith(".json"):
+            with open(path, "rb") as fh:
+                intakes.append(_parse_intake(label, fh.read()))
+        else:
+            raise ValueError(f"{label}: documentation must be .pdf, .docx, .md or an intake .json.")
+    return parsed, intakes
+
+
 class App:
     def __init__(self, data_dir):
         self.store = Store(data_dir)
@@ -117,8 +153,8 @@ class App:
     def stage(self, label, rfile, length):
         """Stream an upload to disk in chunks, so file size never depends on memory."""
         ext = os.path.splitext(label)[1].lower()
-        if ext not in (".zip", ".json"):
-            raise ValueError(f"{label}: only .zip exports and .json intake files are supported.")
+        if ext not in (".zip", ".json") + DOC_EXT:
+            raise ValueError(f"{label}: unsupported file type.")
         token = secrets.token_hex(8)
         path = os.path.join(self.staging, token + ext)
         left = length
@@ -160,7 +196,8 @@ class App:
             return doc, hit[1]
         ex = export_from_dict(doc["export"])
         blocks = build(ex, analyse(ex), doc["intake"], title=doc["title"],
-                       date=datetime.date.today().isoformat()) if ex.bots else []
+                       date=datetime.date.today().isoformat(), docs=doc["documentation"]
+                       ) if ex.bots or doc["documentation"] else []
         self._cache[name] = (doc["updated"], blocks)
         return doc, blocks
 
@@ -207,9 +244,14 @@ def make_handler(app: App, port: int):
                     return self._json({"error": "No such document."}, 404)
                 doc, blocks = res
                 menu, html = to_html(blocks) if blocks else ([], "")
-                return self._json({"name": name, "title": doc["title"], "bots": len(doc["export"]["bots"]),
-                                   "updated": doc["updated"], "history": doc["history"][-8:][::-1],
-                                   "has_intake": bool(doc["intake"]), "menu": menu, "html": html})
+                return self._json({
+                    "name": name, "title": doc["title"], "bots": len(doc["export"]["bots"]),
+                    "updated": doc["updated"], "history": doc["history"][-8:][::-1],
+                    "has_intake": bool(doc["intake"]), "menu": menu, "html": html,
+                    "sources": [{"name": x["name"], "at": x.get("at", "")} for x in doc["sources"]],
+                    "documentation": [{"name": d["name"], "fp": d["fp"], "pages": d["pages"],
+                                       "sections": sorted(d["sections"])} for d in doc["documentation"]],
+                    "data_dir": app.store.root})
             parts = path.strip("/").split("/")
             if len(parts) == 3 and parts[0] == "download":
                 res = app.generate(parts[1])
@@ -262,6 +304,25 @@ def make_handler(app: App, port: int):
                     finally:
                         app.drop_staged(tokens)
                     return self._json({"ok": True, "name": name, "report": report})
+                if u.path == "/api/documentation/load":
+                    req = json.loads(body or b"{}")
+                    tokens = [str(t) for t in req.get("staged", [])]
+                    try:
+                        name = str(req.get("doc", "")).strip()
+                        if not valid_name(name):
+                            raise ValueError("Document name must be 1 to 60 letters, digits, spaces, dot, dash or underscore.")
+                        paths = [x for x in str(req.get("paths", "")).splitlines() if x.strip()]
+                        if not tokens and not paths:
+                            raise ValueError("Choose a file or give a path to a documentation file or folder.")
+                        parsed, intakes = classify_docs(app.take_staged(tokens), paths)
+                        report = app.store.load_docs(name, str(req.get("mode", "add")), parsed, intakes,
+                                                     title=str(req.get("title", "")).strip() or None)
+                    finally:
+                        app.drop_staged(tokens)
+                    return self._json({"ok": True, "name": name, "report": report})
+                if u.path == "/api/documentation/remove":
+                    req = json.loads(body or b"{}")
+                    return self._json({"ok": app.store.remove_doc(str(req.get("doc", "")), str(req.get("fp", "")))})
                 if u.path == "/api/delete":
                     return self._json({"ok": app.store.delete(json.loads(body or b"{}").get("name", ""))})
             except (ValueError, KeyError) as e:
@@ -272,6 +333,24 @@ def make_handler(app: App, port: int):
             print(f"{self.address_string()} {fmt % args}")
 
     return Handler
+
+
+def migrate_legacy(data_dir):
+    """Copy documents stored beside the code (older versions) into the data folder, once.
+
+    Runs only when the data folder has no documents yet, so it can never overwrite anything.
+    """
+    legacy = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "documents")
+    if os.path.abspath(legacy) == os.path.abspath(data_dir) or not os.path.isdir(legacy):
+        return 0
+    have = os.path.isdir(data_dir) and any(f.endswith(".sdd.json") for f in os.listdir(data_dir))
+    old = [f for f in os.listdir(legacy) if f.endswith(".sdd.json")]
+    if have or not old:
+        return 0
+    os.makedirs(data_dir, exist_ok=True)
+    for f in old:
+        shutil.copy2(os.path.join(legacy, f), os.path.join(data_dir, f))
+    return len(old)
 
 
 def main(argv=None):
@@ -291,6 +370,9 @@ def main(argv=None):
         return 1
     # Only after the port is ours: building the app clears the staging folder, which a copy
     # that is already running may still be using.
+    moved = migrate_legacy(args.data_dir)
+    if moved:
+        print(f"Copied {moved} stored document(s) from the old location into {args.data_dir}")
     server.RequestHandlerClass = make_handler(App(args.data_dir), args.port)
     url = f"http://localhost:{args.port}/"
     print(f"SDD Generator v{__version__} running at {url}\nDocuments stored in {args.data_dir}\nCtrl+C to stop")

@@ -10,6 +10,7 @@ import copy
 import datetime
 import json
 import os
+import shutil
 import re
 from dataclasses import asdict
 
@@ -97,17 +98,37 @@ class Store:
         if not valid_name(name) or not os.path.exists(self._path(name)):
             return None
         with open(self._path(name), encoding="utf-8") as fh:
-            return json.load(fh)
+            doc = json.load(fh)
+        doc.setdefault("documentation", [])
+        doc.setdefault("sources", [])
+        return doc
 
     def save(self, name, doc):
         doc["updated"] = datetime.datetime.now().isoformat(timespec="seconds")
+        self._backup(name)
         tmp = self._path(name) + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(doc, fh)
         os.replace(tmp, self._path(name))  # never leave a half-written document
 
+    KEEP_BACKUPS = 10
+
+    def _backup(self, name):
+        """Keep the previous version of a document before every save, so nothing is ever lost."""
+        src = self._path(name)
+        if not os.path.exists(src):
+            return
+        folder = os.path.join(self.root, "backups", name)
+        os.makedirs(folder, exist_ok=True)
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        shutil.copy2(src, os.path.join(folder, stamp + ".sdd.json"))
+        old = sorted(os.listdir(folder))[:-self.KEEP_BACKUPS]
+        for f in old:
+            os.remove(os.path.join(folder, f))
+
     def delete(self, name):
         if valid_name(name) and os.path.exists(self._path(name)):
+            self._backup(name)  # deleting is the one way to lose a document, so it leaves a copy behind
             os.remove(self._path(name))
             return True
         return False
@@ -125,7 +146,10 @@ class Store:
         existing = self.get(name)
         old_ex = export_from_dict(existing["export"]) if existing else Export(source=name)
         if mode == "overwrite" or existing is None:
-            doc = {"title": title or (existing or {}).get("title") or name, "intake": {},
+            # overwriting the code never touches documentation or intake: those are other inputs
+            doc = {"title": title or (existing or {}).get("title") or name,
+                   "intake": (existing or {}).get("intake", {}),
+                   "documentation": (existing or {}).get("documentation", []),
                    "export": export_to_dict(Export(source=name)), "history": (existing or {}).get("history", []),
                    "sources": []}
         else:
@@ -167,3 +191,63 @@ class Store:
                                    **{k: v for k, v in report.items() if k not in ("names", "noop")}})
             self.save(name, doc)
         return report
+
+    # ------------------------------------------------------------ documentation ---
+
+    def _blank(self, name, title=None):
+        return {"title": title or name, "intake": {}, "documentation": [], "sources": [], "history": [],
+                "export": export_to_dict(Export(source=name))}
+
+    def load_docs(self, name, mode, parsed, intakes, title=None):
+        """Add documentation files (parsed SDDs) and intake JSON to a document.
+
+        'add' keeps what is stored: a file with the same name replaces the older copy, and the same
+        content is a no-op. 'overwrite' replaces all documentation and intake. Code is never touched.
+        """
+        if mode not in ("add", "overwrite"):
+            raise ValueError("Mode must be add or overwrite.")
+        existing = self.get(name)
+        doc = copy.deepcopy(existing) if existing else self._blank(name, title)
+        report = {"mode": mode, "added": [], "updated": [], "unchanged": [], "removed": [], "intake": len(intakes)}
+        if mode == "overwrite":
+            keep = {d["fp"] for d in parsed}
+            report["removed"] = [d["name"] for d in doc["documentation"] if d["fp"] not in keep]
+            doc["documentation"], doc["intake"] = [], {}
+        for d in parsed:
+            same = next((x for x in doc["documentation"] if x["fp"] == d["fp"]), None)
+            renamed = next((x for x in doc["documentation"] if x["name"] == d["name"] and x["fp"] != d["fp"]), None)
+            if same:
+                report["unchanged"].append(d["name"])
+                continue
+            if renamed:
+                doc["documentation"].remove(renamed)
+                report["updated"].append(d["name"])
+            else:
+                report["added"].append(d["name"])
+            doc["documentation"].append(d)
+        for i in intakes:
+            doc["intake"] = deep_merge(doc["intake"], i)
+        if title:
+            doc["title"] = title
+        changed = (existing is None or doc["documentation"] != existing["documentation"]
+                   or doc["intake"] != existing["intake"] or doc["title"] != existing["title"])
+        report["noop"] = not changed
+        if changed:
+            stamp = datetime.datetime.now().isoformat(timespec="seconds")
+            doc["history"].append({"at": stamp, "kind": "documentation", "mode": mode,
+                                   "files": [d["name"] for d in parsed],
+                                   **{k: (len(v) if isinstance(v, list) else v) for k, v in report.items()
+                                      if k not in ("mode", "noop")}})
+            self.save(name, doc)
+        return report
+
+    def remove_doc(self, name, fp):
+        doc = self.get(name)
+        if not doc:
+            return False
+        keep = [d for d in doc["documentation"] if d["fp"] != fp]
+        if len(keep) == len(doc["documentation"]):
+            return False
+        doc["documentation"] = keep
+        self.save(name, doc)
+        return True

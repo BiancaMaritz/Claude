@@ -35,6 +35,8 @@ def to_markdown(blocks) -> str:
             out.append(f"{'#' * (b[1] + 1)} {b[2]}\n")
         elif k in ("p", "todo"):
             out.append(f"{b[1]}\n")
+        elif k == "src":
+            out.append(f"*{b[1]}*\n")
         elif k == "ul":
             out += [f"- {t}" for t in b[1]] + [""]
         elif k == "table":
@@ -113,7 +115,7 @@ def to_docx(blocks, path):
     from docx import Document
     from docx.shared import Pt
 
-    from docx.shared import Inches
+    from docx.shared import Inches, RGBColor
 
     doc = Document()
     for sec in doc.sections:
@@ -131,6 +133,10 @@ def to_docx(blocks, path):
             doc.add_heading(b[2], b[1])
         elif k in ("p", "todo"):
             _add_runs(doc.add_paragraph(), b[1])
+        elif k == "src":
+            r = doc.add_paragraph().add_run(b[1])
+            r.italic = True
+            r.font.color.rgb = RGBColor(0x1F, 0x5F, 0xBF)
         elif k == "ul":
             for t in b[1]:
                 _add_runs(doc.add_paragraph(style="List Bullet"), t)
@@ -189,11 +195,16 @@ def to_html(blocks):
             hid = f"s{n}"
             out.append(f'<h{lvl + 1} id="{hid}">{_h(text)}</h{lvl + 1}>')
             if lvl <= 2:
-                entry = {"id": hid, "level": lvl, "text": text, "todo": 0}
+                entry = {"id": hid, "level": lvl, "text": text, "todo": 0, "docs": 0}
                 menu.append(entry)
                 cur[lvl] = entry
                 if lvl == 1:
                     cur[2] = None
+        elif k == "src":
+            out.append(f'<div class="src">{_h(b[1])}</div>')
+            for lvl in (1, 2):
+                if cur[lvl]:
+                    cur[lvl]["docs"] = cur[lvl].get("docs", 0) + 1
         elif k in ("p", "todo"):
             out.append(f"<p>{_h(b[1])}</p>")
             todo = len(PLACEHOLDER.findall(str(b[1])))

@@ -358,3 +358,187 @@ def test_page_shows_version_and_port_clash_is_explained(client, capsys, tmp_path
         held.close()
     assert "older copy" in capsys.readouterr().out
     assert not (tmp_path / "x").exists()  # a failed start must not touch a running copy's files
+
+
+# ------------------------------------------------------------ documentation ---
+
+def make_sdd_pdf(path, process="The bot logs in and downloads the rebate files."):
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    st = getSampleStyleSheet()["Normal"]
+    grid = TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.black)])
+
+    def table(rows):
+        t = Table([[Paragraph(c, st) for c in r] for r in rows], colWidths=[130, 330])
+        t.setStyle(grid)
+        return t
+
+    story = [Paragraph("Contents", st), Paragraph("1. Business Requirements 2", st),
+             Paragraph("a. Process Description 2", st), Paragraph("1. Business Requirements", st),
+             Paragraph("a. Process Description", st), Paragraph(process, st), Spacer(1, 12),
+             Paragraph("b. Priority (MoSCoW)", st),
+             table([["Must Have", "&#9679; Download all files"], ["Should Have", "&#9679; Summary table"],
+                    ["Could Have", ""], ["Won't Have", "&#9679; Scanned documents"]]), Spacer(1, 12),
+             Paragraph("c. Assumptions", st), Paragraph("- All portals look the same.", st), Spacer(1, 12),
+             Paragraph("d. Functional Requirements", st),
+             table([["FR1", "Download all claims for a week."], ["FR2", "Save files in SharePoint."]]), Spacer(1, 12),
+             Paragraph("3. Technical Design", st), Paragraph("a. Applications &amp; Systems", st),
+             table([["APP1", "Excel", "Client/Server", "Full", "SVC_bot@example.com"]]), Spacer(1, 12),
+             Paragraph("b. Bot Components", st),
+             table([["Main Bot 1", "Logic Manager"], ["Sub Bot 1", "Shoprite Downloader Bot"]])]
+    SimpleDocTemplate(path).build(story)
+
+
+def test_parse_pdf_sections_and_tables(tmp_path):
+    from sdd_generator.docparse import parse_document
+
+    pdf = tmp_path / "Old SDD.pdf"
+    make_sdd_pdf(str(pdf))
+    d = parse_document(str(pdf))
+    s = d["sections"]
+    assert d["name"] == "Old SDD.pdf" and len(d["fp"]) == 64
+    assert s["process_description"]["blocks"][0] == ("p", "The bot logs in and downloads the rebate files.")
+    assert {"moscow", "functional_requirements", "applications", "bot_components"} <= set(s)
+    moscow = s["moscow"]["blocks"][0][1]
+    assert moscow[0][0] == "Must Have" and "Download all files" in moscow[0][1]
+    assert s["functional_requirements"]["blocks"][0][1][1] == ["FR2", "Save files in SharePoint."]
+    assert s["assumptions"]["blocks"][0] == ("ul", ["All portals look the same."])
+
+
+def test_parse_docx_and_md_and_errors(tmp_path):
+    import docx
+
+    from sdd_generator.docparse import parse_document
+
+    d = docx.Document()
+    d.add_heading("1. Business Requirements", 1)
+    d.add_heading("a. Process Description", 2)
+    d.add_paragraph("Does the thing.")
+    d.add_heading("d. Functional Requirements", 2)
+    t = d.add_table(rows=1, cols=2)
+    t.rows[0].cells[0].text, t.rows[0].cells[1].text = "FR1", "Do it."
+    d.save(tmp_path / "x.docx")
+    s = parse_document(str(tmp_path / "x.docx"))["sections"]
+    assert s["process_description"]["blocks"] == [("p", "Does the thing.")]
+    assert s["functional_requirements"]["blocks"][0][1] == [["FR1", "Do it."]]
+    (tmp_path / "x.md").write_text("## a. Process Description\n\nHello.\n\n## d. Functional Requirements\n\n| a | b |\n| --- | --- |\n| FR1 | Go |\n")
+    assert parse_document(str(tmp_path / "x.md"))["sections"]["functional_requirements"]["blocks"][0][1][-1] == ["FR1", "Go"]
+    (tmp_path / "bad.md").write_text("nothing useful here")
+    with pytest.raises(ValueError, match="no SDD sections"):
+        parse_document(str(tmp_path / "bad.md"))
+    (tmp_path / "x.exe").write_bytes(b"MZ")
+    with pytest.raises(ValueError, match="must be"):
+        parse_document(str(tmp_path / "x.exe"))
+
+
+def _doc_from(tmp_path, process="Documented description."):
+    from sdd_generator.docparse import parse_document
+
+    p = tmp_path / "doc.pdf"
+    make_sdd_pdf(str(p), process)
+    return parse_document(str(p), "Old SDD.pdf")
+
+
+def test_documentation_fills_gaps_but_code_and_intake_win(export_dir, tmp_path):
+    ex = load_export(str(export_dir))
+    a = analyse(ex)
+    doc = _doc_from(tmp_path)
+    plain = to_markdown(build(ex, a, {}, title="T", date="2026-01-01"))
+    withdoc = to_markdown(build(ex, a, {}, title="T", date="2026-01-01", docs=[doc]))
+    assert "[TO BE COMPLETED]: business description" in plain
+    assert "Documented description." in withdoc and "*From documentation: Old SDD.pdf, page 1*" in withdoc
+    assert "[TO BE COMPLETED]: business description" not in withdoc
+    # intake the user typed beats documentation
+    over = to_markdown(build(ex, a, {"process_description": "Typed by me."}, docs=[doc], title="T", date="x"))
+    assert "Typed by me." in over and "Documented description." not in over
+    # code stays the source of truth: its bot table is untouched and documented-only bots are listed apart
+    assert "Main Bot 1" in withdoc and "Shoprite Downloader Bot (Old SDD.pdf)" in withdoc
+    assert "0 of 2 bot names in documentation match" in withdoc
+    # Appendix G says what was read and used
+    assert "Appendix G. Documentation Coverage" in withdoc and "moscow" in withdoc
+
+
+def test_documentation_only_document_renders(tmp_path):
+    from sdd_generator.loader import Export
+
+    ex = Export(source="x")
+    md = to_markdown(build(ex, analyse(ex), {}, title="Docs only", date="x", docs=[_doc_from(tmp_path)]))
+    assert "Documented description." in md
+
+
+def test_store_documentation_lifecycle_and_backups(export_dir, tmp_path):
+    from sdd_generator.store import Store
+    from sdd_generator.web import classify
+
+    store = Store(str(tmp_path / "docs"))
+    doc = _doc_from(tmp_path)
+    r = store.load_docs("L", "add", [doc], [{"assumptions": ["A"]}])
+    assert r["added"] == ["Old SDD.pdf"] and not r["noop"]
+    assert store.load_docs("L", "add", [doc], [])["noop"]                      # same file again: nothing changes
+    newer = dict(doc, fp="f" * 64)
+    assert store.load_docs("L", "add", [newer], [])["updated"] == ["Old SDD.pdf"]  # same name, new content
+    assert len(store.get("L")["documentation"]) == 1
+    # code load and overwrite never touch documentation or intake
+    ex, it, names, src = classify([("a.zip", zip_of(export_dir))], [])
+    store.load("L", "add", ex, it, names, sources=src)
+    store.load("L", "overwrite", ex, it, names, sources=src)
+    got = store.get("L")
+    assert len(got["documentation"]) == 1 and got["intake"] == {"assumptions": ["A"]} and len(got["export"]["bots"]) == 5
+    # documentation overwrite never touches code
+    store.load_docs("L", "overwrite", [], [])
+    got = store.get("L")
+    assert got["documentation"] == [] and got["intake"] == {} and len(got["export"]["bots"]) == 5
+    # every save keeps the previous version; deleting leaves a copy too
+    backups = os.listdir(tmp_path / "docs" / "backups" / "L")
+    assert len(backups) >= 3
+    store.delete("L")
+    assert store.get("L") is None and len(os.listdir(tmp_path / "docs" / "backups" / "L")) == len(backups) + 1
+    assert store.remove_doc("L", "x") is False
+
+
+def test_web_documentation_api(export_dir, tmp_path, client):
+    pdf = tmp_path / "Old SDD.pdf"
+    make_sdd_pdf(str(pdf))
+
+    def docs_load(paths="", staged=(), mode="add"):
+        code, body = client.call("POST", "/api/documentation/load", json.dumps(
+            {"doc": "W", "mode": mode, "paths": paths, "staged": list(staged)}).encode(),
+            {"Content-Type": "application/json"})
+        return code, json.loads(body)
+
+    code, tok = client.stage("Old SDD.pdf", pdf.read_bytes())
+    assert code == 200
+    code, j = docs_load(staged=[tok["token"]])
+    assert code == 200 and j["report"]["added"] == ["Old SDD.pdf"]
+    assert docs_load(paths=str(pdf))[1]["report"]["noop"] is True          # same content by path
+    assert docs_load(paths=str(tmp_path))[0] == 200                         # a folder works too
+    code, j = docs_load(paths=str(tmp_path / "missing.pdf"))
+    assert code == 400 and "not found" in j["error"]
+    client.load("W", [("a.zip", zip_of(export_dir, skip=("Old SDD.pdf",)))])
+    d = json.loads(client.call("GET", "/api/doc?name=W")[1])
+    assert d["bots"] == 5 and d["documentation"][0]["name"] == "Old SDD.pdf"
+    assert any(m["docs"] for m in d["menu"]) and "From documentation" in d["html"]
+    fp = d["documentation"][0]["fp"]
+    code, body = client.call("POST", "/api/documentation/remove", json.dumps({"doc": "W", "fp": fp}).encode(),
+                             {"Content-Type": "application/json"})
+    assert json.loads(body)["ok"] is True
+    assert json.loads(client.call("GET", "/api/doc?name=W")[1])["documentation"] == []
+
+
+def test_legacy_documents_are_copied_once_and_never_overwrite(tmp_path, monkeypatch):
+    import sdd_generator.web as web
+
+    pkg = tmp_path / "code" / "sdd_generator"
+    pkg.mkdir(parents=True)
+    legacy = tmp_path / "code" / "data" / "documents"
+    legacy.mkdir(parents=True)
+    (legacy / "Lucy.sdd.json").write_text('{"old": true}')
+    monkeypatch.setattr(web, "__file__", str(pkg / "web.py"))
+    new = tmp_path / "keep" / "documents"
+    assert web.migrate_legacy(str(new)) == 1 and (new / "Lucy.sdd.json").read_text() == '{"old": true}'
+    (new / "Lucy.sdd.json").write_text('{"new": true}')
+    assert web.migrate_legacy(str(new)) == 0                       # data already there: nothing is touched
+    assert (new / "Lucy.sdd.json").read_text() == '{"new": true}'
+    assert web.migrate_legacy(str(legacy)) == 0                    # same folder: nothing to do
