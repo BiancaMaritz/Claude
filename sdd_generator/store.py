@@ -6,6 +6,7 @@ that stored state, so the preview and the downloads can never disagree.
 """
 from __future__ import annotations
 
+import copy
 import datetime
 import json
 import os
@@ -111,38 +112,58 @@ class Store:
             return True
         return False
 
-    def load(self, name, mode, exports, intakes, filenames, title=None):
-        """Apply a load. mode: 'add' (merge into the document) or 'overwrite' (replace it)."""
+    def load(self, name, mode, exports, intakes, filenames, title=None, sources=None):
+        """Apply a load. mode: 'add' (merge into the document) or 'overwrite' (replace it).
+
+        `sources` is [{name, fp}] for every loaded file. The result says which of them were
+        already part of the document and whether the load changed anything at all; a load that
+        changes nothing is not written and not added to the history.
+        """
         if mode not in ("add", "overwrite"):
             raise ValueError("Mode must be add or overwrite.")
+        sources = sources or []
         existing = self.get(name)
+        old_ex = export_from_dict(existing["export"]) if existing else Export(source=name)
         if mode == "overwrite" or existing is None:
             doc = {"title": title or (existing or {}).get("title") or name, "intake": {},
-                   "export": export_to_dict(Export(source=name)), "history": []}
+                   "export": export_to_dict(Export(source=name)), "history": (existing or {}).get("history", []),
+                   "sources": []}
         else:
-            doc = existing
+            doc = copy.deepcopy(existing)  # `existing` stays untouched for the before/after comparison
+            doc.setdefault("sources", [])
             if title:
                 doc["title"] = title
+        known = {x["fp"] for x in (existing or {}).get("sources", [])}
         base = export_from_dict(doc["export"])
         report = {"mode": mode, "created": existing is None, "added": 0, "updated": 0, "unchanged": 0,
-                  "removed": 0, "intake": 0}
+                  "removed": 0, "intake": 0,
+                  "already_loaded": [x["name"] for x in sources if x["fp"] in known]}
         for ex in exports:
-            a, u, s = merge_exports(base, ex)
-            report["added"] += len(a)
-            report["updated"] += len(u)
-            report["unchanged"] += len(s)
-        if mode == "overwrite" and existing:
-            # report the replacement against what the document held before
-            old = export_from_dict(existing["export"]).bots
-            report.update(
-                added=len(set(base.bots) - set(old)), removed=len(set(old) - set(base.bots)),
-                updated=sum(1 for p in base.bots if p in old and _bot_key(old[p]) != _bot_key(base.bots[p])),
-                unchanged=sum(1 for p in base.bots if p in old and _bot_key(old[p]) == _bot_key(base.bots[p])))
+            merge_exports(base, ex)
+        # Compare the result with what the document held before, bot by bot.
+        old = old_ex.bots
+        added = sorted(set(base.bots) - set(old))
+        removed = sorted(set(old) - set(base.bots))
+        updated = sorted(p for p in base.bots if p in old and _bot_key(old[p]) != _bot_key(base.bots[p]))
+        report.update(added=len(added), removed=len(removed), updated=len(updated),
+                      unchanged=len(base.bots) - len(added) - len(updated),
+                      names={"added": added[:100], "updated": updated[:100], "removed": removed[:100]})
         for i in intakes:
             doc["intake"] = deep_merge(doc["intake"], i)
             report["intake"] += 1
         doc["export"] = export_to_dict(base)
-        doc["history"].append({"at": datetime.datetime.now().isoformat(timespec="seconds"),
-                               "files": filenames, **report})
-        self.save(name, doc)
+        seen = {x["fp"] for x in doc["sources"]}
+        doc["sources"] += [x for x in sources if x["fp"] not in seen]
+        stamp = datetime.datetime.now().isoformat(timespec="seconds")
+        for x in sources:
+            for have in doc["sources"]:
+                if have["fp"] == x["fp"]:
+                    have.update(name=x["name"], at=stamp)
+        unchanged_state = (existing is not None and doc["export"] == existing["export"]
+                           and doc["intake"] == existing["intake"] and doc["title"] == existing["title"])
+        report["noop"] = unchanged_state
+        if not unchanged_state:
+            doc["history"].append({"at": stamp, "files": filenames,
+                                   **{k: v for k, v in report.items() if k not in ("names", "noop")}})
+            self.save(name, doc)
         return report

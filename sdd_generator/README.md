@@ -20,10 +20,11 @@ Opens http://localhost:8765/ (bound to 127.0.0.1 only). Elsewhere: `python -m sd
 
 - **Left:** document picker, a Load files panel, and the section menu. Each section shows how many placeholders are still open.
 - **Right:** the expected SDD, rendered from the stored document. Click a menu item to jump to that section.
-- **Load files:** one or more export `.zip` files and an optional intake `.json`.
+- **Load files:** one or more export `.zip` files and an optional intake `.json`, either chosen in the browser (up to 300 MB each) or given as a **path on this computer** (a `.zip`, an extracted export folder, or a `.json`). Paths are read straight from disk with no upload and no size limit, so use them for large exports. Only bot and manifest JSON is read; jars, screenshots and other binaries are skipped without being opened, so a multi-gigabyte export loads in well under a second.
   - **Add to document:** merges bots into the stored document. A bot with the same path replaces the old one; a manifest-only record never erases bot logic already stored. Intake files merge (lists append without duplicates, other values are replaced).
   - **Overwrite document:** the document restarts from the files you load. You are asked to confirm.
-  - Each load reports bots added, updated, unchanged and removed, and is kept in the load history.
+  - Each load reports bots added, updated, unchanged and removed (with the names of the changed ones), and is kept in the load history.
+  - **Reloading the same content is detected.** Zips are identified by the size and CRC of their entries, folders by file hashes, so renaming or moving a file does not fool it. If a load changes nothing the app says "No changes", writes nothing and adds no history entry. Reloading an older version still applies it, because the document may have moved on since.
 - **Download:** Word (.docx) or Markdown (.md) of exactly what the preview shows.
 
 Documents are stored as JSON in `data/documents/` next to the package (override with `--data-dir`). They contain the bot logic from your exports, so keep that folder out of git (it is in `.gitignore`).

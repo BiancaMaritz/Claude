@@ -18,7 +18,7 @@ h1.brand{font-size:17px;margin:0}
 .box{border:1px solid var(--line);border-radius:8px;padding:12px}
 .box h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:0 0 8px}
 label{display:block;font-size:12px;color:var(--mut);margin:8px 0 3px}
-select,input[type=text],input[type=file]{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit}
+select,textarea,input[type=text],input[type=file]{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit}
 .row{display:flex;gap:8px;align-items:center}
 button{font:inherit;padding:7px 12px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--fg);cursor:pointer}
 button.primary{background:var(--acc);color:var(--acc-fg);border-color:var(--acc)}
@@ -29,7 +29,7 @@ details.box>summary{cursor:pointer;margin-bottom:8px}
 .modes label{display:flex;gap:8px;align-items:flex-start;color:var(--fg);font-size:13px;margin:0;padding:6px 8px;border:1px solid var(--line);border-radius:6px;cursor:pointer}
 .modes small{display:block;color:var(--mut)}
 .modes input:checked+span{font-weight:600}
-#msg{margin-top:8px;font-size:13px}.ok{color:var(--ok)}.err{color:var(--err)}
+#msg{margin-top:8px;font-size:13px}#detail{font-size:12px;color:var(--mut)}#detail div{overflow-wrap:anywhere}textarea{resize:vertical}.ok{color:var(--ok)}.err{color:var(--err)}
 nav ul{list-style:none;margin:0;padding:0}
 nav .g{margin-top:10px;font-weight:600;font-size:13px}
 nav a{display:flex;justify-content:space-between;gap:8px;padding:4px 8px;border-radius:6px;color:var(--fg);text-decoration:none;cursor:pointer}
@@ -72,10 +72,12 @@ main details{max-width:980px;margin:0 auto 40px;padding:0 4px;color:var(--mut);f
     </div>
     <label for="files">Export .zip file(s) and optional intake .json</label>
     <input id="files" type="file" multiple accept=".zip,.json">
+    <label for="paths">Or load from a path on this computer (.zip, export folder or .json). No size limit.</label>
+    <textarea id="paths" rows="2" placeholder="C:\Exports\Herotel.zip"></textarea>
     <label for="title">Title (optional)</label>
     <input id="title" type="text" placeholder="Document title" maxlength="120">
     <div class="row" style="margin-top:10px"><button id="loadBtn" class="primary">Load</button></div>
-    <div id="msg" role="status"></div>
+    <div id="msg" role="status"></div><div id="detail"></div>
   </details>
 
   <nav aria-label="Sections"><div class="box"><h2>Sections</h2><ul id="menu"></ul></div></nav>
@@ -183,20 +185,30 @@ $("newOk").addEventListener("click", async () => {
 });
 
 $("loadBtn").addEventListener("click", async () => {
-  const files = $("files").files;
+  const files = $("files").files, paths = $("paths").value.trim();
   if (!current) { say("Create a document first.", "err"); return; }
-  if (!files.length) { say("Choose at least one file.", "err"); return; }
+  if (!files.length && !paths) { say("Choose a file or enter a path.", "err"); return; }
   const mode = document.querySelector('input[name=mode]:checked').value;
   if (mode === "overwrite" && !confirm(`Overwrite "${current}"? Its stored bots and intake will be replaced by these files.`)) return;
   const fd = new FormData();
   fd.append("doc", current); fd.append("mode", mode); fd.append("title", $("title").value.trim());
+  fd.append("paths", paths);
   for (const f of files) fd.append("files", f, f.name);
-  $("loadBtn").disabled = true; say("Loading...");
+  $("loadBtn").disabled = true; say("Loading..."); $("detail").replaceChildren();
   try {
     const j = await api("/api/load", {method: "POST", body: fd});
     const r = j.report;
-    say(`${r.mode === "add" ? "Added to" : "Overwrote"} "${j.name}": ${r.added} added, ${r.updated} updated, ${r.unchanged} unchanged, ${r.removed} removed` + (r.intake ? `, ${r.intake} intake file(s)` : "") + ".", "ok");
-    $("files").value = ""; $("title").value = "";
+    const seen = r.already_loaded.length ? ` Already loaded before: ${r.already_loaded.join(", ")}.` : "";
+    if (r.noop) say(`No changes: this content is already in "${j.name}" (${r.unchanged} bots identical).` + seen, "ok");
+    else say(`${r.mode === "add" ? "Added to" : "Overwrote"} "${j.name}": ${r.added} added, ${r.updated} updated, ${r.unchanged} unchanged, ${r.removed} removed` + (r.intake ? `, ${r.intake} intake file(s)` : "") + "." + seen, "ok");
+    for (const k of ["added", "updated", "removed"]) {
+      if (r.names && r.names[k].length) {
+        const d = document.createElement("div");
+        d.textContent = k + ": " + r.names[k].map(x => x.split("/").pop()).join(", ");
+        $("detail").appendChild(d);
+      }
+    }
+    $("files").value = ""; $("paths").value = ""; $("title").value = "";
     await refreshDocs(j.name);
   } catch (e) { say(e.message, "err"); }
   finally { $("loadBtn").disabled = false; }

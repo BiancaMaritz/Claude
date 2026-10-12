@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import tempfile
@@ -23,7 +24,7 @@ from .loader import load_export
 from .render import to_docx, to_html, to_markdown
 from .store import Store, export_from_dict, valid_name
 
-MAX_UPLOAD = 1024 * 1024 * 1024  # 1 GB
+MAX_UPLOAD = 300 * 1024 * 1024  # larger exports are read from a local path instead
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 DEFAULT_DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "documents")
 
@@ -40,36 +41,73 @@ def parse_multipart(headers, body: bytes) -> list:
     return out
 
 
-def classify_uploads(files):
-    """Split uploads into exports (zip) and intake dicts (json). Raises ValueError with a clear reason."""
-    exports, intakes, names = [], [], []
-    for fname, data in files:
-        names.append(fname)
+def _load_zip_or_dir(label, source):
+    try:
+        ex = load_export(source)
+    except Exception as e:  # bad zip, bad manifest JSON, unreadable folder
+        raise ValueError(f"{label}: not a readable export ({type(e).__name__}: {e}).") from e
+    if not ex.bots:
+        raise ValueError(f"{label}: no bots found. Use the zip or folder exported from the Control Room.")
+    ex.source = label
+    return ex
+
+
+def _parse_intake(label, data: bytes):
+    try:
+        d = json.loads(data.decode("utf-8-sig"))
+    except ValueError as e:
+        raise ValueError(f"{label}: invalid JSON ({e}).") from e
+    if not isinstance(d, dict) or "nodes" in d or "files" in d:
+        raise ValueError(f"{label}: expected an intake file. Bot files and manifests go inside the export zip.")
+    return d
+
+
+def classify(uploads, paths):
+    """Turn uploaded files and local paths into (exports, intakes, names, sources).
+
+    uploads: [(filename, bytes)]. paths: local file or folder paths read straight from disk, so
+    size is limited only by the disk. sources: [{name, fp}] identifying each file's content.
+    Raises ValueError with a clear reason.
+    """
+    exports, intakes, names, sources = [], [], [], []
+    for fname, data in uploads:
         low = fname.lower()
         if low.endswith(".zip"):
             with tempfile.TemporaryDirectory() as tmp:
                 path = os.path.join(tmp, "export.zip")
                 with open(path, "wb") as fh:
                     fh.write(data)
-                try:
-                    ex = load_export(path)
-                except Exception as e:  # bad zip, bad manifest JSON
-                    raise ValueError(f"{fname}: not a readable export ({type(e).__name__}).") from e
-            if not ex.bots:
-                raise ValueError(f"{fname}: no bots found. Use the zip exported from the Control Room.")
-            ex.source = fname
+                ex = _load_zip_or_dir(fname, path)
             exports.append(ex)
+            sources.append({"name": fname, "fp": ex.fingerprint})
         elif low.endswith(".json"):
-            try:
-                d = json.loads(data.decode("utf-8-sig"))
-            except ValueError as e:
-                raise ValueError(f"{fname}: invalid JSON ({e}).") from e
-            if not isinstance(d, dict) or "nodes" in d or "files" in d:
-                raise ValueError(f"{fname}: expected an intake file. Bot files and manifests go inside the export zip.")
-            intakes.append(d)
+            intakes.append(_parse_intake(fname, data))
+            sources.append({"name": fname, "fp": hashlib.sha256(data).hexdigest()})
         else:
             raise ValueError(f"{fname}: only .zip exports and .json intake files are supported.")
-    return exports, intakes, names
+        names.append(fname)
+    for raw in paths:
+        path = raw.strip().strip('"').strip("'")
+        label = os.path.basename(path.rstrip("\\/")) or path
+        if not os.path.exists(path):
+            raise ValueError(f"{path}: not found on this machine.")
+        if os.path.isdir(path) or path.lower().endswith(".zip"):
+            ex = _load_zip_or_dir(label, path)
+            exports.append(ex)
+            sources.append({"name": label, "fp": ex.fingerprint})
+        elif path.lower().endswith(".json"):
+            with open(path, "rb") as fh:
+                data = fh.read()
+            intakes.append(_parse_intake(label, data))
+            sources.append({"name": label, "fp": hashlib.sha256(data).hexdigest()})
+        else:
+            raise ValueError(f"{path}: give a .zip export, an extracted export folder, or a .json intake file.")
+        names.append(label)
+    return exports, intakes, names, sources
+
+
+def classify_uploads(files):
+    return classify(files, [])
 
 
 class App:
@@ -165,7 +203,8 @@ def make_handler(app: App, port: int):
                 return self._json({"error": "Forbidden"}, 403)
             length = int(self.headers.get("Content-Length") or 0)
             if not 0 < length <= MAX_UPLOAD:
-                return self._json({"error": "Upload is empty or larger than 1 GB."}, 400)
+                return self._json({"error": "Upload is empty or larger than 300 MB. For large exports use "
+                                              "Load from path: the app reads the file from disk without uploading it."}, 400)
             body = self.rfile.read(length)
             try:
                 if self.path == "/api/load":
@@ -175,11 +214,12 @@ def make_handler(app: App, port: int):
                     if not valid_name(name):
                         raise ValueError("Document name must be 1 to 60 letters, digits, spaces, dot, dash or underscore.")
                     files = [(f, d) for n, f, d in parts if n == "files" and f]
-                    if not files:
-                        raise ValueError("Choose at least one .zip export or .json intake file.")
-                    exports, intakes, names = classify_uploads(files)
+                    paths = [x for x in field.get("paths", "").splitlines() if x.strip()]
+                    if not files and not paths:
+                        raise ValueError("Choose a file or give a path to a .zip export, export folder or .json intake.")
+                    exports, intakes, names, sources = classify(files, paths)
                     report = app.store.load(name, field.get("mode", "add"), exports, intakes, names,
-                                            title=field.get("title") or None)
+                                            title=field.get("title") or None, sources=sources)
                     return self._json({"ok": True, "name": name, "report": report})
                 if self.path == "/api/delete":
                     name = json.loads(body).get("name", "")

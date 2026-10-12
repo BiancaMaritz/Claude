@@ -229,3 +229,99 @@ def test_web_api(export_dir, tmp_path):
         assert json.loads(urllib.request.urlopen(base + "/api/docs").read())[0]["bots"] == 5
     finally:
         srv.shutdown()
+
+
+def test_reload_same_content_is_detected(export_dir, tmp_path):
+    from sdd_generator.store import Store
+    from sdd_generator.web import classify
+
+    store = Store(str(tmp_path / "docs"))
+    z = zip_of(export_dir)
+    ex, it, names, src = classify([("v1.zip", z)], [])
+    r1 = store.load("d", "add", ex, it, names, sources=src)
+    assert not r1["noop"] and r1["already_loaded"] == []
+    n_hist = len(store.get("d")["history"])
+    # same content again, even under another file name: detected, nothing written
+    ex, it, names, src = classify([("renamed copy.zip", z)], [])
+    r2 = store.load("d", "add", ex, it, names, sources=src)
+    assert r2["noop"] and r2["unchanged"] == 5 and r2["already_loaded"] == ["renamed copy.zip"]
+    assert len(store.get("d")["history"]) == n_hist
+    # overwrite with identical content is also a no-op
+    assert store.load("d", "overwrite", ex, it, names, sources=src)["noop"]
+
+
+def test_reload_older_version_still_applies(export_dir, tmp_path):
+    from sdd_generator.store import Store
+    from sdd_generator.web import classify
+
+    store = Store(str(tmp_path / "docs"))
+    v1 = zip_of(export_dir)
+    changed = json.loads((export_dir / WORK).read_text())
+    changed["nodes"].append(step("New step"))
+    (export_dir / WORK).write_text(json.dumps(changed))
+    v2 = zip_of(export_dir)
+    for name, z in (("v1.zip", v1), ("v2.zip", v2), ("v1.zip", v1)):
+        ex, it, names, src = classify([(name, z)], [])
+        r = store.load("d", "add", ex, it, names, sources=src)
+    # v1 was loaded before, but the document now holds v2's Worker, so reloading v1 must revert it
+    assert r["already_loaded"] == ["v1.zip"] and not r["noop"] and r["updated"] == 1
+    assert [n.rsplit("/", 1)[-1] for n in r["names"]["updated"]] == ["Worker"]
+
+
+def test_zip_fingerprint_ignores_name_and_location(export_dir, tmp_path):
+    a, b = tmp_path / "a.zip", tmp_path / "sub" / "b.zip"
+    b.parent.mkdir()
+    data = zip_of(export_dir)
+    a.write_bytes(data)
+    b.write_bytes(data)
+    assert load_export(str(a)).fingerprint == load_export(str(b)).fingerprint != ""
+    (export_dir / "Automation Anywhere/Bots/lib.jar").write_bytes(b"x")
+    b.write_bytes(zip_of(export_dir, skip=("a.zip", "sub/b.zip")))
+    assert load_export(str(a)).fingerprint != load_export(str(b)).fingerprint  # an added file changes it
+
+
+def test_binaries_are_never_read(export_dir, tmp_path, monkeypatch):
+    (export_dir / "Automation Anywhere/Bots/huge.jar").write_bytes(b"\0" * 5_000_000)
+    z = tmp_path / "x.zip"
+    z.write_bytes(zip_of(export_dir))
+    read = []
+    orig = zipfile.ZipFile.read
+    monkeypatch.setattr(zipfile.ZipFile, "read", lambda self, n, *a, **k: (read.append(getattr(n, "filename", n)), orig(self, n, *a, **k))[1])
+    assert len(load_export(str(z)).bots) == 5
+    assert not any(str(n).endswith(".jar") for n in read)
+
+
+def test_web_load_from_path(export_dir, tmp_path):
+    import threading
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    from sdd_generator.web import App, make_handler
+
+    z = tmp_path / "big export.zip"
+    z.write_bytes(zip_of(export_dir))
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), None)
+    port = srv.server_address[1]
+    srv.RequestHandlerClass = make_handler(App(str(tmp_path / "docs")), port)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    def load(path):
+        b = "XB"
+        body = "".join(f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'
+                       for k, v in {"doc": "P", "mode": "add", "paths": path}.items()) + f"--{b}--\r\n"
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/load", body.encode(),
+                                     {"Content-Type": f"multipart/form-data; boundary={b}"})
+        try:
+            return json.loads(urllib.request.urlopen(req).read())
+        except urllib.error.HTTPError as e:
+            return json.loads(e.read())
+
+    try:
+        assert load(f'"{z}"')["report"]["added"] == 5          # Windows "Copy as path" adds quotes
+        assert load(str(z))["report"]["noop"] is True          # same file again
+        assert load(str(export_dir))["report"]["already_loaded"] == []  # a folder is a different source
+        assert "not found" in load(str(tmp_path / "nope.zip"))["error"]
+        (tmp_path / "notes.txt").write_text("hi")
+        assert "give a .zip" in load(str(tmp_path / "notes.txt"))["error"]
+    finally:
+        srv.shutdown()
