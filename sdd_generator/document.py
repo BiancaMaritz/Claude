@@ -163,6 +163,20 @@ def build(ex: Export, a: dict, intake: dict, title=None, date=None, docs=None, e
     else:
         B += D.blocks("business_rules") or [("todo", f"{TODO}: confirmed business rules. Candidate rules are in "
                                                     "Appendix B (decision points read from the bot logic).")]
+    if D and ex.bots:
+        from .rules import analyse_rules
+
+        found = [f for f in analyse_rules(ex, D.docs, extra.get("acceptances"))["findings"] if f["link"] == "strong"]
+        if found:
+            B.append(("h", 3, "Documentation compared with the code"))
+            B.append(("p", "Rules in the documentation that read differently from what the code does. The code is the "
+                           "source of truth. A difference stays open until someone accepts that the change is valid."))
+            rows = []
+            for f in found:
+                status = {"Open": f"Open {CONFIRM}", "Changed": f"Reopened, a value changed since it was accepted {CONFIRM}",
+                          "Accepted": "Accepted" + (f": {f['note']}" if f["note"] else "") + f" ({f['accepted_at'][:10]})"}[f["status"]]
+                rows.append([f"{f['rule']['id']} ({f['rule']['doc']})", f["doc_says"], [f["code_says"], f"in {f['where']}"], status])
+            B.append(("table", ["Rule", "Documentation says", "Code shows", "Status"], rows))
     B.append(("h", 2, "e. Functional Design - Sign Off"))
     B.append(("table", ["Stakeholder", "Role in Automation", "Email", "Date", "Initial"],
               _stakeholder_rows(intake, True) or [[TODO, "", "", "Enter date.", ""]]))

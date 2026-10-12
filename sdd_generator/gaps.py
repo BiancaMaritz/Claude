@@ -1,10 +1,11 @@
 """Work out what is still missing: bots to provide, and documented steps the code does not cover.
 
-Three kinds of evidence, strongest first:
-  Certain   the code itself shows a bot is missing: a bot calls it, or the export manifest lists it,
-            but its file is not in the export.
+The code is the source of truth, so only what the code itself shows missing is a bot to provide:
+  Certain   a bot calls it, or the export manifest lists it, but its file is not in the export.
+Anything found only in documentation or table exports (a documented bot or step with no code, a table no
+SQL touches) is assumed retired. It is still worked out, but kept apart as "documentation only":
   Likely    documentation lists a bot component that no bot in the code matches.
-  Possible  inferred from wording or data: an exported table that no bot in the code touches.
+  Possible  an exported table that no bot in the code touches.
 
 Documented process steps are matched to the code by shared words (bot names, step labels, comments,
 variables, text constants, packages used). That is a heuristic and the result says so: every finding
@@ -254,9 +255,7 @@ def analyse_gaps(ex, a, docs, tables):
     notes = []
     if not ex.bots:
         notes.append("No code is loaded yet, so documented steps cannot be compared with it.")
-    elif not D.has("process_flow"):
-        notes.append("No documentation with a process flow is loaded, so steps cannot be checked. Load old SDDs under Documentation.")
-    else:
+    elif D.has("process_flow"):
         vocab = code_vocabulary(ex, a)
         weight = word_weights(vocab)
         steps = [judge_step(s, vocab, ex, weight) for s in documented_steps(docs)]
@@ -287,13 +286,17 @@ def analyse_gaps(ex, a, docs, tables):
                 f"The exported table {t['name']} is not referenced by any SQL in the code, so whichever bot fills or reads it may be missing.",
                 where=f"Table export {t['source']}")
 
-    bots = sorted(entries.values(), key=lambda e: (ORDER[e["confidence"]], e["name"].lower()))
-    count = lambda c: sum(1 for e in bots if e["confidence"] == c)
+    everything = sorted(entries.values(), key=lambda e: (ORDER[e["confidence"]], e["name"].lower()))
+    # The code is the source of truth. Only what the code itself shows missing is a bot to provide; anything
+    # found only in documentation or table exports is assumed retired and kept apart, for reference.
+    bots = [e for e in everything if e["confidence"] == CERTAIN]
+    doc_only = {"bots": [e for e in everything if e["confidence"] == LIKELY],
+                "tables": [e for e in everything if e["confidence"] == POSSIBLE], "steps": steps}
     st = lambda s: sum(1 for x in steps if x["status"] == s)
     return {
-        "bots": bots, "steps": steps, "notes": notes,
-        "summary": {"certain": count(CERTAIN), "likely": count(LIKELY), "possible": count(POSSIBLE),
-                    "to_provide": count(CERTAIN) + count(LIKELY),
+        "bots": bots, "doc_only": doc_only, "notes": notes,
+        "summary": {"to_provide": len(bots), "doc_only_bots": len(doc_only["bots"]),
+                    "doc_only_tables": len(doc_only["tables"]),
                     "documented_bots": len(documented), "documented_found": found,
                     "steps_total": len(steps), "steps_covered": st("Covered"), "steps_partly": st("Partly"),
                     "steps_missing": st("Not found"), "steps_unchecked": st("Not checkable"),
@@ -308,6 +311,6 @@ def to_csv(result):
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["Bot to provide", "Confidence", "Why", "Where to find it"])
-    for e in result["bots"]:
+    for e in result["bots"]:  # only bots the code itself shows missing
         w.writerow([e["name"], e["confidence"], " | ".join(e["reasons"]), "; ".join(e["where"])])
     return buf.getvalue()

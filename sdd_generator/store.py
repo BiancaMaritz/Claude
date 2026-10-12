@@ -101,6 +101,7 @@ class Store:
             doc = json.load(fh)
         for key in ("documentation", "sources", "videos", "graphs", "tables"):
             doc.setdefault(key, [])
+        doc.setdefault("acceptances", {})
         return doc
 
     def save(self, name, doc):
@@ -152,6 +153,7 @@ class Store:
                    "intake": (existing or {}).get("intake", {}),
                    "documentation": (existing or {}).get("documentation", []),
                    **{k: (existing or {}).get(k, []) for k in ("videos", "graphs", "tables")},
+                   "acceptances": (existing or {}).get("acceptances", {}),
                    "export": export_to_dict(Export(source=name)), "history": (existing or {}).get("history", []),
                    "sources": []}
         else:
@@ -198,7 +200,8 @@ class Store:
 
     def _blank(self, name, title=None):
         return {"title": title or name, "intake": {}, "documentation": [], "sources": [], "history": [],
-                "videos": [], "graphs": [], "tables": [], "export": export_to_dict(Export(source=name))}
+                "videos": [], "graphs": [], "tables": [], "acceptances": {},
+                "export": export_to_dict(Export(source=name))}
 
     def media_dir(self, name):
         """Where a project's uploaded videos and graphs live, beside the documents folder."""
@@ -256,6 +259,24 @@ class Store:
         doc[kind] = [x for x in doc[kind] if x["id"] != item_id]
         self.save(name, doc)
         return item
+
+    # ------------------------------------------------------------- acceptances ---
+
+    def accept(self, name, finding_id, sig, note):
+        """Record that a documentation/code difference is a valid change. Tied to the values it was given for."""
+        doc = self.get(name)
+        if not doc:
+            raise ValueError("No such project.")
+        doc["acceptances"][finding_id] = {"sig": sig, "note": str(note)[:500], "at": self._stamp()}
+        self.save(name, doc)
+
+    def reopen(self, name, finding_id):
+        doc = self.get(name)
+        if not doc or finding_id not in doc["acceptances"]:
+            return False
+        del doc["acceptances"][finding_id]
+        self.save(name, doc)
+        return True
 
     # ------------------------------------------------------------------ tables ---
 

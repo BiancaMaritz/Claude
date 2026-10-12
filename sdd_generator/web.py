@@ -26,6 +26,7 @@ from .analyze import analyse
 from .docparse import parse_document
 from .document import build
 from .gaps import analyse_gaps, to_csv as gaps_csv
+from .rules import analyse_rules
 from .loader import load_export
 from .media import (CONTENT_TYPES, IMAGE_EXT, SECTION_KEYS, SECTIONS, TRANSCRIPT_EXT, VIDEO_EXT, ext_of,
                     new_id, parse_transcript)
@@ -241,7 +242,7 @@ class App:
             return doc, hit[1]
         ex = export_from_dict(doc["export"])
         extra = {"videos": doc["videos"], "graphs": doc["graphs"], "tables": doc["tables"], "project": name,
-                 "media_dir": self.store.media_dir(name)}
+                 "media_dir": self.store.media_dir(name), "acceptances": doc["acceptances"]}
         has_content = ex.bots or doc["documentation"] or doc["videos"] or doc["graphs"] or doc["tables"]
         blocks = build(ex, analyse(ex), doc["intake"], title=doc["title"], date=datetime.date.today().isoformat(),
                        docs=doc["documentation"], extra=extra) if has_content else []
@@ -259,6 +260,7 @@ class App:
             return hit[1]
         ex = export_from_dict(doc["export"])
         res = analyse_gaps(ex, analyse(ex), doc["documentation"], doc["tables"])
+        res["rules"] = analyse_rules(ex, doc["documentation"], doc["acceptances"])
         self._gap_cache[name] = (key, res)
         return res
 
@@ -291,8 +293,9 @@ class App:
             "graphs": [dict(item(g), url=f"/media/{name}/{g['id']}") for g in doc["graphs"]],
             "tables": doc["tables"],
             "history": doc["history"][-12:][::-1],
-            "gaps": ({k: g["summary"][k] for k in ("to_provide", "steps_missing")}
-                     if (g := self.gaps(name)) else {"to_provide": 0, "steps_missing": 0}),
+            "gaps": ({"to_provide": g["summary"]["to_provide"],
+                      "open_rules": g["rules"]["summary"]["open"] + g["rules"]["summary"]["changed"]}
+                     if (g := self.gaps(name)) else {"to_provide": 0, "open_rules": 0}),
         }
 
     def _media_path(self, name, item):
@@ -574,6 +577,18 @@ def make_handler(app: App, port: int):
                         except OSError:
                             pass
                     return self._json({"ok": bool(item)})
+                if u.path in ("/api/rules/accept", "/api/rules/reopen"):
+                    req = json.loads(body or b"{}")
+                    name, fid = str(req.get("doc", "")), str(req.get("id", ""))
+                    if u.path == "/api/rules/reopen":
+                        return self._json({"ok": app.store.reopen(name, fid)})
+                    res = app.gaps(name)
+                    found = next((f for f in (res["rules"]["findings"] if res else []) if f["id"] == fid), None)
+                    if not found:
+                        raise ValueError("That difference no longer exists. Reload the page.")
+                    # the values accepted are the server's own, never the browser's
+                    app.store.accept(name, fid, found["sig"], str(req.get("note", "")).strip())
+                    return self._json({"ok": True})
                 if u.path == "/api/tables/remove":
                     req = json.loads(body or b"{}")
                     return self._json({"ok": app.store.remove_table(str(req.get("doc", "")), str(req.get("table", "")))})

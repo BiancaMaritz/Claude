@@ -347,53 +347,86 @@ function viewTables() {
       i.tables.length ? h("div", {class: "tw"}, h("table", {}, h("thead", {}, h("tr", {}, ["Table", "Rows", "Columns", "Loaded", ""].map(x => h("th", {}, x)))), h("tbody", {}, i.tables.map(row)))) : h("p", {class: "note"}, "None yet."))];
 }
 
-const PILL = {Certain: "red", Likely: "amber", Possible: "grey", Covered: "green", Partly: "amber", "Not found": "red", "Not checkable": "grey"};
-const pill = t => h("span", {class: "pill " + (PILL[t] || "grey")}, t);
+const PILL = {Certain: "red", Likely: "amber", Possible: "grey", Covered: "green", Partly: "amber", "Not found": "red", "Not checkable": "grey",
+  Open: "red", Changed: "amber", Accepted: "green"};
+const pill = (t, label) => h("span", {class: "pill " + (PILL[t] || "grey")}, label || t);
+
+function findingCard(f, p) {
+  const r = f.rule, accepted = f.status === "Accepted";
+  const act = accepted
+    ? h("button", {class: "tiny", onclick: async () => { await post("/api/rules/reopen", {doc: p, id: f.id}); reload(); }}, "Reopen")
+    : h("button", {class: "tiny primary", onclick: async () => {
+        const note = prompt("Why is this change valid? (optional note, kept with the acceptance)", "");
+        if (note === null) return;
+        await post("/api/rules/accept", {doc: p, id: f.id, note}); flash("Accepted. It now sits under Accepted.", []); reload();
+      }}, "Accept: the change is valid");
+  return h("div", {class: "item", style: "margin:0 0 10px"},
+    h("div", {class: "row", style: "justify-content:space-between"}, h("span", {}, pill(f.status, f.status === "Changed" ? "Reopened: a value changed" : f.status), " ", h("b", {}, r.id), " ",
+      h("span", {class: "note"}, `${r.doc}${r.page ? ", page " + r.page : ""}`)), act),
+    h("p", {class: "note", style: "margin:6px 0"}, `"${r.text.length > 260 ? r.text.slice(0, 260) + "..." : r.text}"`),
+    h("div", {class: "grid", style: "grid-template-columns:1fr 1fr"},
+      h("div", {}, h("div", {class: "note"}, "Documentation says"), h("b", {}, f.doc_says)),
+      h("div", {}, h("div", {class: "note"}, "Code does, in " + f.where), h("b", {}, f.code_says))),
+    f.detail.length && f.kind === "codes" ? h("ul", {class: "note"}, f.detail.map(d => h("li", {}, d))) : null,
+    accepted || f.note ? h("div", {class: "note"}, `${accepted ? "Accepted" : "Previously accepted"}${f.accepted_at ? " on " + f.accepted_at.slice(0, 10) : ""}${f.note ? ": " + f.note : ""}`) : null);
+}
 
 async function viewAnalysis() {
   const p = S.project;
   let g;
-  try { g = await api("/api/analysis?name=" + encodeURIComponent(p)); } catch (e) { return [h("div", {class: "page"}, ...header("Analysis", "Nothing to analyse yet."), h("p", {class: "note"}, "Load code and documentation first."))]; }
-  const m = g.summary;
+  try { g = await api("/api/analysis?name=" + encodeURIComponent(p)); } catch (e) { return [h("div", {class: "page"}, ...header("Analysis", "Nothing to analyse yet."), h("p", {class: "note"}, "Load the code first."))]; }
+  const m = g.summary, rs = g.rules.summary, strong = g.rules.findings.filter(f => f.link === "strong"), weakOnes = g.rules.findings.filter(f => f.link !== "strong");
   const stat = (big, small) => h("div", {class: "stat"}, h("b", {}, big), h("span", {}, small));
   const stats = h("div", {class: "stats"},
-    stat(m.to_provide, `bots to provide (${m.certain} certain, ${m.likely} likely)`),
-    stat(m.possible, "possible, from table exports"),
-    stat(m.steps_total ? `${m.steps_covered} of ${m.steps_total}` : "-", `documented steps covered (${m.steps_partly} partly, ${m.steps_missing} not found)`),
-    stat(m.documented_bots ? `${m.documented_found} of ${m.documented_bots}` : "-", "documented bots found in the code"));
-  const botRows = g.bots.map(e => h("tr", {}, h("td", {}, h("b", {}, e.name), e.documented_as ? h("div", {class: "note"}, "documented as " + e.documented_as) : null),
-    h("td", {}, pill(e.confidence)), h("td", {}, h("ul", {}, e.reasons.map(r => h("li", {}, r)))), h("td", {}, e.where.join("; ") || "-")));
-  const filter = h("select", {style: "width:auto"}, ["All", "Not found", "Partly", "Covered", "Not checkable"].map(x => h("option", {value: x}, x === "All" ? "All steps" : x)));
-  const body = h("tbody", {});
-  const drawSteps = () => {
-    body.replaceChildren();
-    let last = "";
-    for (const s of g.steps) {
-      if (filter.value !== "All" && s.status !== filter.value) continue;
-      const where = `${s.doc}${s.page ? ", page " + s.page : ""}${s.scenario ? ", " + s.scenario : ""}`;
-      if (where !== last) { body.append(h("tr", {}, h("td", {colspan: 5, style: "background:var(--bg);font-weight:600"}, where))); last = where; }
-      body.append(h("tr", {}, h("td", {}, s.step), h("td", {}, s.text.length > 220 ? s.text.slice(0, 220) + "..." : s.text), h("td", {}, pill(s.status)),
-        h("td", {}, s.best ? [h("div", {}, s.best), h("div", {class: "note"}, "shared words: " + s.matched.join(", "))] : (s.matched.length ? h("div", {class: "note"}, "words found across several bots: " + s.matched.join(", ")) : "-")),
-        h("td", {}, s.missing_bot ? s.missing_bot : "-")));
-    }
-    if (!body.children.length) body.append(h("tr", {}, h("td", {colspan: 5}, "No steps match this filter.")));
+    stat(m.to_provide, "bots to provide (the code calls them, they are not in the export)"),
+    stat(rs.open + rs.changed, `rule differences to decide (${rs.accepted} accepted)`),
+    stat(rs.checked ? `${rs.agree} of ${rs.checked}` : "-", "checked documentation facts that agree with the code"),
+    stat(m.doc_only_bots + m.steps_total + m.doc_only_tables, "found only outside the code, assumed retired"));
+  const flashLine = S.flash && S.flash.view === "analysis" ? (() => { const t = S.flash.text; S.flash = null; return h("p", {class: "msg ok"}, t); })() : null;
+
+  // rule differences
+  const filter = h("select", {style: "width:auto"}, ["Open", "Accepted", "All"].map(x => h("option", {value: x}, x === "Open" ? "To decide" : x)));
+  const box = h("div", {});
+  const draw = () => {
+    box.replaceChildren();
+    const want = filter.value, show = f => want === "All" || (want === "Open" ? f.status !== "Accepted" : f.status === "Accepted");
+    const list = strong.filter(show);
+    if (!list.length) box.append(h("p", {class: "note"}, rs.checked || weakOnes.length ? (want === "Open" ? "No differences left to decide." : "Nothing here.") : (m.has_docs ? "No documented rule could be tied to a place in the code, so nothing could be compared." : "Load documentation to compare its rules with the code.")));
+    for (const f of list) box.append(findingCard(f, p));
+    const weakShown = weakOnes.filter(show);
+    if (weakShown.length) box.append(h("details", {class: "method"}, h("summary", {}, `Weaker links (${weakShown.length}): the rule and the step share only one word, so these may be unrelated`),
+      weakShown.map(f => findingCard(f, p))));
   };
-  filter.addEventListener("change", drawSteps); drawSteps();
-  return [h("div", {class: "page"}, ...header("Analysis", "What is still missing, worked out from the code, the documentation and the table exports. Every finding shows the evidence it rests on."),
+  filter.addEventListener("change", draw); draw();
+
+  const agree = g.rules.agreements.length ? h("details", {class: "method"}, h("summary", {}, `Checked and agree (${g.rules.agreements.length})`),
+    h("div", {class: "tw"}, h("table", {}, h("thead", {}, h("tr", {}, ["Rule", "Documentation", "Code", "Where"].map(x => h("th", {}, x)))),
+      h("tbody", {}, g.rules.agreements.map(a => h("tr", {}, h("td", {}, `${a.rule.id} (${a.rule.doc})`), h("td", {}, a.doc_says), h("td", {}, a.code_says), h("td", {}, a.where))))))) : null;
+
+  const botRows = g.bots.map(e => h("tr", {}, h("td", {}, h("b", {}, e.name)), h("td", {}, h("ul", {}, e.reasons.map(r => h("li", {}, r)))), h("td", {}, e.where.join("; ") || "-")));
+  const d = g.doc_only;
+  const docOnly = (d.bots.length || d.tables.length || d.steps.length) ? h("details", {class: "method"}, h("summary", {}, `Found only outside the code (${d.bots.length + d.tables.length + d.steps.length}): assumed retired, no action needed`),
+    d.bots.length ? [h("p", {}, "Bots the documentation lists that no bot in the code matches:"), h("ul", {}, d.bots.map(e => h("li", {}, `${e.name} (${e.where.join("; ")})`)))] : null,
+    d.tables.length ? [h("p", {}, "Exported tables that no SQL in the code touches:"), h("ul", {}, d.tables.map(e => h("li", {}, e.name.replace("A bot that uses table ", ""))))] : null,
+    d.steps.length ? [h("p", {}, `Documented process steps (${d.steps.length}), compared with the code by shared words:`),
+      h("div", {class: "tw"}, h("table", {}, h("thead", {}, h("tr", {}, ["Step", "Documented", "Status", "Closest code"].map(x => h("th", {}, x)))),
+        h("tbody", {}, d.steps.map(s => h("tr", {}, h("td", {}, `${s.step} (${s.doc.slice(0, 30)})`), h("td", {}, s.text.length > 160 ? s.text.slice(0, 160) + "..." : s.text), h("td", {}, pill(s.status)), h("td", {}, s.best ? `${s.best}: ${s.matched.join(", ")}` : "-"))))))] : null) : null;
+
+  return [h("div", {class: "page"}, ...header("Analysis", "The code is the source of truth. This tab shows what the code needs that is missing, and where the documentation says something different from what the code does. Anything found only outside the code is assumed retired."),
     ...g.notes.map(x => h("p", {class: "note", style: "color:var(--todo-fg);background:var(--todo-bg);padding:6px 10px;border-radius:6px"}, x)),
-    stats,
+    flashLine, stats,
+    h("div", {class: "card"}, h("div", {class: "row", style: "justify-content:space-between"}, h("h2", {style: "margin:0"}, "Rule differences"), filter),
+      h("p", {class: "note"}, "Documented rules that read differently from the code: time limits, retry counts, lists of codes, file naming patterns. Accept a difference when the change is valid; the code stays the truth and the SDD records your note. If the documentation or the code changes afterwards, the difference reopens by itself."),
+      box, agree),
     h("div", {class: "card"}, h("div", {class: "row", style: "justify-content:space-between"}, h("h2", {style: "margin:0"}, "Bots to provide"),
         g.bots.length ? h("button", {class: "tiny", onclick: () => { location.href = `/download/${encodeURIComponent(p)}/analysis`; }}, "Download list (.csv)") : null),
-      g.bots.length ? h("div", {class: "tw"}, h("table", {}, h("thead", {}, h("tr", {}, ["Bot", "Confidence", "Why", "Where to find it"].map(x => h("th", {}, x)))), h("tbody", {}, botRows)))
-        : h("p", {class: "note"}, m.has_code ? "Nothing missing was found from the evidence loaded. More documentation or table exports give more to compare against." : "Load code first.")),
-    h("div", {class: "card"}, h("div", {class: "row", style: "justify-content:space-between"}, h("h2", {style: "margin:0"}, `Documented steps (${m.steps_total})`), filter),
-      m.steps_total ? h("div", {class: "tw"}, h("table", {}, h("thead", {}, h("tr", {}, ["Step", "Documented", "Status", "Closest code", "Missing bot"].map(x => h("th", {}, x)))), body))
-        : h("p", {class: "note"}, "No documented process steps to check. Load old SDDs under Documentation.")),
+      g.bots.length ? h("div", {class: "tw"}, h("table", {}, h("thead", {}, h("tr", {}, ["Bot", "Why", "Where to find it"].map(x => h("th", {}, x)))), h("tbody", {}, botRows)))
+        : h("p", {class: "note"}, m.has_code ? "None. Every bot the code calls is in the export, and the manifest lists no bot without its file." : "Load code first.")),
+    docOnly,
     h("details", {class: "method"}, h("summary", {}, "How this is worked out"),
-      h("p", {}, "Certain: the code itself shows a gap, either a bot calls another bot that is not in the export, or the export manifest lists a bot whose file is missing."),
-      h("p", {}, "Likely: documentation lists a bot component and no bot in the code matches its name."),
-      h("p", {}, "Possible: an exported table that no SQL in the code touches, so the bot that fills or reads it may be missing."),
-      h("p", {}, "Steps are compared with the code by shared words: bot names, step labels, comments, variables, text constants and the packages used. Words nearly every bot uses count for little. This is a wording match, not proof: Covered means strong overlap, Partly means some, Not found means little or none. Check Partly and Not found against the code before asking anyone for a bot.")))];
+      h("p", {}, "Bots to provide: a bot in the code calls another bot that is not in the export, or the export manifest lists a bot whose file is missing. Nothing else counts."),
+      h("p", {}, "Rule differences: documented rules (business rules, requirements, assumptions, process steps) are searched for facts that can be read exactly: durations, retry counts, lists of codes, file names. Each is compared with the same kind of fact in the step or bot whose label shares words with the rule. A link of two or more shared words is strong; one shared word is weak and is listed apart. A documented rule with nothing comparable in the code is ignored."),
+      h("p", {}, "Matching a rule to a place in the code is by wording, so check the evidence shown before accepting or acting on a difference."))) ];
 }
 
 async function viewSDD() {
@@ -420,7 +453,8 @@ function renderMenu() {
   const menu = $("menu"); menu.replaceChildren();
   $("nav").hidden = !S.project; $("navTitle").textContent = S.project || "Project";
   if (!S.project || !S.info) return;
-  const i = S.info, counts = {analysis: i.gaps && i.gaps.to_provide ? i.gaps.to_provide + " to provide" : "", code: i.code.bots ? i.code.bots + " bots" : "", docs: i.documentation.length || "", videos: i.videos.length || "", graphs: i.graphs.length || "", tables: i.tables.length || ""};
+  const todo = i => (i.gaps ? i.gaps.to_provide + i.gaps.open_rules : 0);
+  const i = S.info, counts = {analysis: todo(S.info) ? todo(S.info) + " to decide" : "", code: i.code.bots ? i.code.bots + " bots" : "", docs: i.documentation.length || "", videos: i.videos.length || "", graphs: i.graphs.length || "", tables: i.tables.length || ""};
   for (const v of VIEWS) {
     const li = h("li", {}, h("a", {class: S.view === v.id ? "on" : "", onclick: () => go(v.id)}, h("span", {}, v.label), counts[v.id] ? h("span", {class: "count"}, counts[v.id]) : null));
     if (v.id === "sdd" && S.view === "sdd" && S.sdd && S.sdd.menu && S.sdd.menu.length) {

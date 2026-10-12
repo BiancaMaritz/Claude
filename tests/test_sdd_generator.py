@@ -784,7 +784,7 @@ def _code(tmp_path, bots):
     return load_export(str(root))
 
 
-def test_analysis_finds_missing_bots_and_uncovered_steps(tmp_path):
+def test_analysis_bots_to_provide_come_only_from_the_code(tmp_path):
     from sdd_generator.gaps import analyse_gaps
 
     bots = {
@@ -799,28 +799,28 @@ def test_analysis_finds_missing_bots_and_uncovered_steps(tmp_path):
     ex = _code(tmp_path, bots)
     doc = _doc_with(
         [["Scenario: SC1", "", ""], ["Step", "Screen Shot", "Description"],
-         ["1", "", "• Login to the Shoprite Supplier Portal."],
-         ["2", "", "• Download the rebate claims for the week."],
-         ["3", "", "• Send the claims to the Zorblax gateway."]],
+         ["1", "", "\u2022 Login to the Shoprite Supplier Portal."],
+         ["2", "", "\u2022 Download the rebate claims for the week."],
+         ["3", "", "\u2022 Send the claims to the Zorblax gateway."]],
         [["Bot", "Description"], ["Main Bot 1", "Logic Manager"], ["Sub Bot 1", "Shoprite Login Bot"],
          ["Sub Bot 2", "Zorblax Sender Bot"]])
     tables = [{"name": "Orphan", "source": "Orphan.csv", "rows": 1, "fp": "x", "columns": []}]
     res = analyse_gaps(ex, analyse(ex), [doc], tables)
-    by = {e["name"]: e for e in res["bots"]}
-    assert by["Missing Helper"]["confidence"] == "Certain" and "Called by Orchestrator" in by["Missing Helper"]["reasons"][0]
-    assert by["Missing Helper"]["where"] == ["Bots/Acme/Common/Missing Helper"]
-    assert by["Zorblax Sender Bot"]["confidence"] == "Likely"
-    assert any("Documented step 3" in r for r in by["Zorblax Sender Bot"]["reasons"])    # the uncovered step points at it
-    assert "Shoprite Login Bot" not in by and "Logic Manager" not in by               # documented and present in the code
-    assert by["A bot that uses table Orphan"]["confidence"] == "Possible"
-    status = {s["step"]: s["status"] for s in res["steps"]}
+    # what the code shows missing is a bot to provide
+    assert [(e["name"], e["confidence"]) for e in res["bots"]] == [("Missing Helper", "Certain")]
+    assert "Called by Orchestrator" in res["bots"][0]["reasons"][0]
+    assert res["bots"][0]["where"] == ["Bots/Acme/Common/Missing Helper"]
+    # a bot only the documentation knows is assumed retired: kept apart, never counted as to provide
+    doc_only = {e["name"]: e for e in res["doc_only"]["bots"]}
+    assert set(doc_only) == {"Zorblax Sender Bot"} and doc_only["Zorblax Sender Bot"]["confidence"] == "Likely"
+    assert any("Documented step 3" in r for r in doc_only["Zorblax Sender Bot"]["reasons"])
+    assert [e["name"] for e in res["doc_only"]["tables"]] == ["A bot that uses table Orphan"]
+    status = {s["step"]: s["status"] for s in res["doc_only"]["steps"]}
     assert status == {"1": "Covered", "2": "Covered", "3": "Not found"}
-    s1 = res["steps"][0]
-    assert s1["best"] == "Shoprite Login" and {"login", "shoprite"} <= set(s1["matched"])
+    assert res["doc_only"]["steps"][0]["best"] == "Shoprite Login" and {"login", "shoprite"} <= set(res["doc_only"]["steps"][0]["matched"])
     sm = res["summary"]
-    assert (sm["certain"], sm["likely"], sm["possible"], sm["to_provide"]) == (1, 1, 1, 2)
+    assert (sm["to_provide"], sm["doc_only_bots"], sm["doc_only_tables"]) == (1, 1, 1)
     assert (sm["documented_bots"], sm["documented_found"]) == (3, 2)
-    assert [e["confidence"] for e in res["bots"]] == ["Certain", "Likely", "Possible"]   # strongest evidence first
 
 
 def test_analysis_without_docs_or_code_and_manifest_gap(export_dir, tmp_path):
@@ -832,7 +832,7 @@ def test_analysis_without_docs_or_code_and_manifest_gap(export_dir, tmp_path):
     assert r["bots"] == [] and "No code is loaded" in r["notes"][0]
     ex = load_export(str(export_dir))
     r = analyse_gaps(ex, analyse(ex), [], [])
-    assert r["notes"] and "No documentation" in r["notes"][0] and r["bots"] == []
+    assert r["bots"] == [] and r["notes"] == []
     # the manifest lists a bot whose file is not in the export
     m = json.loads((export_dir / "manifest.json").read_text())
     m["files"].append({"path": "Automation Anywhere\\Bots\\Acme\\Work\\Ghost", "contentType": "application/vnd.aa.taskbot",
@@ -850,15 +850,165 @@ def test_unrelated_code_is_not_called_covered(export_dir, tmp_path):
     from sdd_generator.gaps import analyse_gaps
 
     ex = load_export(str(export_dir))
-    doc = _doc_with([["1", "", "• Push files for storage to the correct folder as per the retailer."]], [["Bot", "Description"]])
-    steps = analyse_gaps(ex, analyse(ex), [doc], [])["steps"]
+    doc = _doc_with([["1", "", "\u2022 Push files for storage to the correct folder as per the retailer."]], [["Bot", "Description"]])
+    steps = analyse_gaps(ex, analyse(ex), [doc], [])["doc_only"]["steps"]
     assert steps and steps[0]["status"] != "Covered"
 
 
 def test_analysis_endpoints(export_dir, tmp_path, client):
     client.load("A", [("a.zip", zip_of(export_dir))])
     j = json.loads(client.call("GET", "/api/analysis?name=A")[1])
-    assert j["summary"]["has_code"] and j["bots"] == [] and j["notes"]
+    assert j["summary"]["has_code"] and j["bots"] == [] and j["rules"]["findings"] == []
     code, body = client.call("GET", "/download/A/analysis")
     assert code == 200 and body.startswith(b"\xef\xbb\xbfBot to provide")
     assert client.call("GET", "/api/analysis?name=Nope")[0] == 404
+
+
+# ------------------------------------------------------- rule differences ---
+
+def datetime_subtract(n, unit):
+    return {"commandName": "subtract", "packageName": "Datetime", "attributes": [
+        {"name": "val", "value": {"type": "NUMBER", "number": str(n)}},
+        {"name": "unit", "value": {"type": "STRING", "string": unit}}]}
+
+
+def string_assign(text):
+    return {"commandName": "assign", "packageName": "String", "attributes": attrs(sourceString=text)}
+
+
+def rules_doc(rows, name="Old.pdf"):
+    return {"name": name, "fp": "e" * 64, "kind": "pdf", "pages": 4, "sections": {
+        "business_rules": {"page": 9, "blocks": [("table", [["Number", "Description"], *rows])]}}}
+
+
+STRONG = "A payment is checked and ignored when it is more than {n} days old."
+
+
+def rules_code(tmp_path, days=5):
+    return _code(tmp_path, {
+        R + "Acme/Work/Payments": bot([step("Check Payment is more than 5 days ago", [datetime_subtract(days, "DAYS")]),
+                                       step("Set business units", [string_assign("200000177,200000180,200007175")]),
+                                       step("Save PDF", [{"commandName": "copyFiles", "packageName": "File",
+                                                          "attributes": attrs(destinationPath="$Out$/$ClaimNumber$-$ContractNumber$-Debit.pdf")}])]),
+        R + "Acme/Work/Other": bot([step("Initialize variables")]),
+    })
+
+
+def test_fact_extraction():
+    from sdd_generator.rules import counts_in, files_in, ids_in, times_in
+
+    assert times_in("a date range of 1 week, retry after two hours and 30 minutes") == {
+        604800: "1 week", 7200: "2 hours", 1800: "30 minutes"}
+    assert times_in("5 business days") == {432000: "5 days"}
+    assert counts_in("retry up to 3 times, then 2 attempts") == {2, 3}
+    assert ids_in("units 200000177 and A32546 on 20260115, order 123") == {"200000177", "A32546"}  # dates and short numbers are not codes
+    assert list(files_in("saved as ClaimNumber-ContractNumber-Debit.pdf")) == [(frozenset({"claimnumber", "contractnumber", "debit"}), "pdf")]
+
+
+def test_rule_differences_and_acceptance_lifecycle(tmp_path):
+    from sdd_generator.rules import analyse_rules
+    from sdd_generator.store import Store
+
+    ex = rules_code(tmp_path)
+    same = rules_doc([["BR1", STRONG.format(n=5)]])
+    r = analyse_rules(ex, [same])
+    assert r["findings"] == [] and r["summary"]["agree"] == 1 and r["agreements"][0]["kind"] == "time"
+    # one week and seven days are the same rule
+    seven = rules_code(tmp_path / "s", days=7)
+    assert analyse_rules(seven, [rules_doc([["BR1", "A payment is checked and ignored when it is more than 1 week old."]])])["summary"]["agree"] == 1
+    # the documentation says 7 days, the code uses 5
+    old = rules_doc([["BR1", STRONG.format(n=7)]])
+    f = analyse_rules(ex, [old])["findings"]
+    assert len(f) == 1 and f[0]["status"] == "Open" and f[0]["doc_says"] == "7 days" and f[0]["code_says"] == "5 days"
+    assert f[0]["where"] == "Payments > Check Payment is more than 5 days ago"
+    # accept it: tied to these exact values
+    store = Store(str(tmp_path / "docs"))
+    store.load_docs("P", "add", [old], [])
+    store.accept("P", f[0]["id"], f[0]["sig"], "Client approved 5 days in March")
+    acc = store.get("P")["acceptances"]
+    g = analyse_rules(ex, [old], acc)["findings"][0]
+    assert g["status"] == "Accepted" and g["note"] == "Client approved 5 days in March" and g["accepted_at"]
+    assert analyse_rules(ex, [old], acc)["summary"] == {"rules": 1, "checked": 1, "agree": 0, "open": 0, "accepted": 1, "changed": 0, "weak": 0}
+    # the code changes afterwards: the acceptance no longer applies, the difference reopens
+    ten = rules_code(tmp_path / "t", days=10)
+    h = analyse_rules(ten, [old], acc)["findings"][0]
+    assert h["id"] == g["id"] and h["status"] == "Changed"
+    # so does a change to the documentation
+    newer = rules_doc([["BR1", STRONG.format(n=9)]])
+    assert analyse_rules(ex, [newer], acc)["findings"][0]["status"] == "Changed"
+    assert store.reopen("P", f[0]["id"]) and analyse_rules(ex, [old], store.get("P")["acceptances"])["findings"][0]["status"] == "Open"
+    assert not store.reopen("P", "nope")
+    # one shared word is only a weak link: still reported, but kept apart and not counted as open
+    weak = analyse_rules(ex, [rules_doc([["BR1", "Payments more than 7 days old are not processed."]])])
+    assert [x["link"] for x in weak["findings"]] == ["weak"] and weak["summary"]["open"] == 0 and weak["summary"]["weak"] == 1
+
+
+def test_rule_differences_in_code_lists_and_file_names(tmp_path):
+    from sdd_generator.rules import analyse_rules
+
+    ex = rules_code(tmp_path)
+    doc = rules_doc([
+        ["BR4", "Business units: 200000177 Sugar, 200000180 Grocery, 200009999 Pies."],
+        ["BR3", "Files are named ClaimNumber-Debit.pdf"]])
+    by = {f["kind"]: f for f in analyse_rules(ex, [doc])["findings"]}
+    ids = by["codes"]
+    assert any("In the code only: 200007175" in d for d in ids["detail"])
+    assert any("In the documentation only: 200009999" in d for d in ids["detail"])
+    assert ids["where"] == "Payments"
+    assert by["file"]["doc_says"] == "ClaimNumber-Debit.pdf" and by["file"]["code_says"] == "$ClaimNumber$-$ContractNumber$-Debit.pdf"
+    # a code list that a second documented rule also covers is not "code only"
+    both = rules_doc([["BR4", "Units 200000177, 200000180 and 200007175."], ["BR9", "Check 200000177."]])
+    assert analyse_rules(ex, [both])["findings"] == []
+
+
+def test_documentation_only_rules_are_ignored(export_dir, tmp_path):
+    from sdd_generator.rules import analyse_rules
+
+    ex = load_export(str(export_dir))
+    doc = rules_doc([["BR1", "Payments older than 30 days are rejected by the Zorblax gateway."],
+                     ["BR2", "Units 777777777 and 888888888 apply."]])
+    r = analyse_rules(ex, [doc])
+    assert r["findings"] == [] and r["agreements"] == [] and r["summary"]["checked"] == 0   # no counterpart in the code
+
+
+def test_differences_appear_in_the_sdd_and_through_the_api(tmp_path, client):
+    import io
+
+    ex = rules_code(tmp_path)
+    old = rules_doc([["BR1", STRONG.format(n=7)]])
+    md = to_markdown(build(ex, analyse(ex), {}, title="T", date="x", docs=[old]))
+    sec = md[md.index("#### Documentation compared with the code"):md.index("### e. Functional Design")]
+    assert "7 days" in sec and "5 days" in sec and "Open [CONFIRM]" in sec
+    from sdd_generator.render import to_html
+
+    menu = to_html(build(ex, analyse(ex), {}, title="T", date="x", docs=[old]))[0]
+    assert next(m for m in menu if m["text"].startswith("d. Business Rules"))["todo"] >= 1   # open differences show in the menu
+    # through the API: the server works out the values, the browser only names the difference
+    root = tmp_path / "code"
+    z = io.BytesIO()
+    with zipfile.ZipFile(z, "w") as zf:
+        for f in root.rglob("*"):
+            if f.is_file():
+                zf.write(f, f.relative_to(root))
+    client.load("R", [("c.zip", z.getvalue())])
+    client.app.store.load_docs("R", "add", [old], [])
+    j = json.loads(client.call("GET", "/api/analysis?name=R")[1])
+    fid = j["rules"]["findings"][0]["id"]
+    assert j["rules"]["summary"]["open"] == 1
+    info = json.loads(client.call("GET", "/api/project?name=R")[1])
+    assert info["gaps"]["open_rules"] == 1
+    def post(path, obj):
+        code, body = client.call("POST", path, json.dumps(obj).encode(), {"Content-Type": "application/json"})
+        return code, json.loads(body)
+    assert post("/api/rules/accept", {"doc": "R", "id": "nope"})[0] == 400
+    assert post("/api/rules/accept", {"doc": "R", "id": fid, "note": "valid change"})[0] == 200
+    j = json.loads(client.call("GET", "/api/analysis?name=R")[1])
+    assert j["rules"]["findings"][0]["status"] == "Accepted" and j["rules"]["summary"]["open"] == 0
+    assert json.loads(client.call("GET", "/api/project?name=R")[1])["gaps"]["open_rules"] == 0
+    sdd = json.loads(client.call("GET", "/api/doc?name=R")[1])["html"]
+    assert "Accepted: valid change" in sdd
+    # replacing the code keeps the acceptance
+    client.load("R", [("c.zip", z.getvalue())], mode="overwrite")
+    assert client.app.store.get("R")["acceptances"]
+    assert post("/api/rules/reopen", {"doc": "R", "id": fid})[1]["ok"]
+    assert json.loads(client.call("GET", "/api/analysis?name=R")[1])["rules"]["summary"]["open"] == 1
