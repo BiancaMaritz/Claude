@@ -64,6 +64,7 @@ class Export:
     has_manifest: bool = False
     has_bot_files: bool = False
     fingerprint: str = ""  # identifies the content of the source, not its name or location
+    assets: list = field(default_factory=list)  # non-bot files listed in the manifest: forms, processes, ...
 
 
 # Exports carry jars, screenshots and other binaries that can total gigabytes. Only bot and
@@ -112,10 +113,25 @@ def _scan(source: str, parts: list):
                     yield info.filename, z.read(info)
 
 
+def _is_taskbot(data) -> bool:
+    """A task bot's nodes are actions (commandName); a process or form file is something else."""
+    nodes = data.get("nodes")
+    return isinstance(nodes, list) and (not nodes or any(isinstance(n, dict) and "commandName" in n for n in nodes))
+
+
+KIND = {"form": "Form", "workflow": "Process", "process": "Process", "taskbot": "Bot", "metabot": "MetaBot",
+        "dataset": "Data set", "report": "Report"}
+
+
+def _kind(content_type: str) -> str:
+    tail = (content_type or "").rsplit(".", 1)[-1].lower()
+    return KIND.get(tail, tail or "File")
+
+
 def load_export(source: str) -> Export:
     ex = Export(source=source)
     manifest = None
-    raw_bots = {}
+    raw_bots, other_json = {}, {}
     parts: list = []
     for rel, blob in _scan(source, parts):
         base = rel.replace("\\", "/").rsplit("/", 1)[-1]
@@ -126,8 +142,10 @@ def load_export(source: str) -> Export:
             data = json.loads(blob)
         except ValueError:
             continue
-        if isinstance(data, dict) and "nodes" in data:
+        if isinstance(data, dict) and "nodes" in data and _is_taskbot(data):
             raw_bots[norm(rel)] = data
+        elif isinstance(data, dict):
+            other_json[norm(rel)] = sorted(data)[:12]
     ex.fingerprint = hashlib.sha256(json.dumps(sorted(parts)).encode()).hexdigest()
 
     if manifest:
@@ -135,7 +153,11 @@ def load_export(source: str) -> Export:
         ex.manifest_packages = manifest.get("packages", [])
         ex.global_values = manifest.get("globalValues", [])
         for f in manifest.get("files", []):
-            if f.get("contentType") != "application/vnd.aa.taskbot":
+            ctype = f.get("contentType") or ""
+            if ctype != "application/vnd.aa.taskbot":
+                if not ctype.startswith("image/") and not f["path"].lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
+                    ex.assets.append({"path": norm(f["path"]), "kind": _kind(ctype), "contentType": ctype,
+                                      "description": f.get("description") or ""})
                 continue
             p = norm(f["path"])
             ex.bots[p] = Bot(
@@ -146,5 +168,9 @@ def load_export(source: str) -> Export:
             )
     for p, data in raw_bots.items():
         ex.bots.setdefault(p, Bot(path=p)).data = data
+    known = {a["path"] for a in ex.assets}
+    for p, keys in other_json.items():  # JSON in the export that is neither a bot nor in the manifest
+        if p not in known and p not in ex.bots:
+            ex.assets.append({"path": p, "kind": "Other", "contentType": "", "description": "keys: " + ", ".join(keys)})
     ex.has_bot_files = bool(raw_bots)
     return ex

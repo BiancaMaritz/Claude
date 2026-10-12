@@ -42,22 +42,22 @@ def _stakeholder_rows(intake, with_date=False):
     return rows
 
 
-def _outline(steps):
-    """Numbered outline lines from [(depth, label)], collapsing immediate repeats."""
+def _flow_rows(entries):
+    """Numbered rows [(number, [text, 'Does: ...'])] from flow entries, collapsing immediate repeats."""
     collapsed = []
-    for depth, label in steps:
-        if collapsed and collapsed[-1][0] == depth and collapsed[-1][1] == label:
-            collapsed[-1][2] += 1
+    for depth, text, does in entries:
+        if collapsed and collapsed[-1][:3] == [depth, text, does]:
+            collapsed[-1][3] += 1
         else:
-            collapsed.append([depth, label, 1])
+            collapsed.append([depth, text, does, 1])
     counters, out = [], []
-    for depth, label, n in collapsed:
+    for depth, text, does, n in collapsed:
         counters = counters[: depth + 1]
         while len(counters) <= depth:
             counters.append(0)
         counters[depth] += 1
-        num = ".".join(str(c) for c in counters)
-        out.append((num, label + (f" (x{n})" if n > 1 else "")))
+        cell = [text + (f" (x{n})" if n > 1 else "")] + ([f"Does: {does}"] if does else [])
+        out.append((".".join(str(c) for c in counters), cell))
     return out
 
 
@@ -124,17 +124,20 @@ def build(ex: Export, a: dict, intake: dict, title=None, date=None, docs=None, e
     # ---- 2 Functional design ---------------------------------------------------
     B.append(("h", 1, "2. Functional Design"))
     B.append(("h", 2, "a. To Be Process Flow Steps"))
-    B.append(("p", "Steps below are the named Step actions in each entry-point bot, in execution order. "
-                   "Indented numbering shows nesting. Screenshots and business wording need review."))
+    B.append(("p", "Each entry-point bot (one no other bot calls) is shown as its named Step actions in execution order, "
+                   "each with what it does. A bot without named Steps is shown as its actions, in order, so no flow is "
+                   "ever blank. Numbering shows nesting. The flows of bots that other bots call are in Appendix A. "
+                   "Screenshots and business wording need review."))
     for p in a["entry"]:
         d = per[p]
-        outline = _outline(d["steps"])
+        rows = _flow_rows(d["flow"])
         B.append(("h", 3, f"Scenario: {short(p)}"))
-        if not outline:
-            B.append(("todo", f"{TODO}: bot has no named Step actions."))
+        if not rows:
+            B.append(("p", "This bot contains no actions."))
             continue
-        B.append(("table", ["Step", "Screen Shot", "Description"],
-                  [[n, "[Screenshot]", t] for n, t in outline]))
+        if d["flow_kind"] == "actions":
+            B.append(("p", "This bot has no named Step actions, so its steps are its actions, in order."))
+        B.append(("table", ["Step", "Screen Shot", "Description"], [[n, "[Screenshot]", cell] for n, cell in rows]))
     if D.has("process_flow"):
         B.append(("h", 3, "Documented process flow"))
         B.append(("p", "Written in older documentation. The steps above are what the code does; the two are "
@@ -220,6 +223,12 @@ def build(ex: Export, a: dict, intake: dict, title=None, date=None, docs=None, e
             rows.append([ref[p], [short(p), b.folder], note or "-",
                          [ref[c] for c in a["calls"][p] if c in ref] or "-"])
     B.append(("table", ["Bot", "Name / Folder", "Description", "Calls"], rows))
+    if ex.assets:
+        B.append(("h", 3, "Other files in the export"))
+        B.append(("p", "Files in the export that are not task bots, such as forms and processes. They are listed here "
+                       "but their contents are not analysed in this version."))
+        B.append(("table", ["Name", "Type", "Folder"],
+                  [[x["path"].rsplit("/", 1)[-1], x["kind"], "/".join(x["path"].split("/")[2:-1]) or "-"] for x in sorted(ex.assets, key=lambda x: x["path"])]))
     if a["cycles"]:
         B.append(("p", "Circular calls: " + "; ".join(" <-> ".join(short(x) for x in c) for c in a["cycles"])))
     if D.has("bot_components"):
@@ -282,11 +291,13 @@ def build(ex: Export, a: dict, intake: dict, title=None, date=None, docs=None, e
     B.append(("h", 1, "Appendix A. Step Outline per Bot"))
     groups = defaultdict(list)
     for p in sorted(ex.bots):
-        if p not in a["entry"] and per[p]["steps"]:
-            groups[tuple(per[p]["steps"])].append(p)
-    for steps, paths in groups.items():
+        if p not in a["entry"] and per[p]["flow"]:
+            groups[tuple(per[p]["flow"])].append(p)
+    for flow, paths in groups.items():
         B.append(("h", 3, ", ".join(short(p) for p in paths[:3]) + (f" and {len(paths) - 3} more with the same steps" if len(paths) > 3 else "")))
-        B.append(("table", ["Step", "Description"], [[n, t] for n, t in _outline(list(steps))]))
+        if per[paths[0]]["flow_kind"] == "actions":
+            B.append(("p", "No named Step actions: the actions of the bot, in order."))
+        B.append(("table", ["Step", "Description"], [[n, cell] for n, cell in _flow_rows(list(flow))]))
 
     B.append(("h", 1, "Appendix B. Decision Points (candidate business rules)"))
     B.append(("p", "Conditions read from If / Else If / While actions, grouped by the enclosing step. "

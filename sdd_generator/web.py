@@ -283,6 +283,8 @@ class App:
             "fresh": bool(doc.get("fresh")),
             "has_intake": bool(doc["intake"]), "sections": [{"key": k, "label": l} for k, l in SECTIONS],
             "code": {"bots": len(doc["export"]["bots"]),
+                     "assets": [{"name": a_["path"].rsplit("/", 1)[-1], "kind": a_["kind"],
+                                 "folder": "/".join(a_["path"].split("/")[2:-1])} for a_ in doc["export"].get("assets", [])],
                      "sources": [{"name": x["name"], "at": x.get("at", "")} for x in doc["sources"]],
                      "folders": [{"folder": f, "bots": n} for f, n in sorted(folders.items())]},
             "documentation": [{"name": d["name"], "fp": d["fp"], "pages": d["pages"], "sections": sorted(d["sections"])}

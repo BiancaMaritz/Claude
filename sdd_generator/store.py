@@ -38,14 +38,15 @@ def deep_merge(a, b):
 
 def export_to_dict(ex: Export) -> dict:
     return {"source": ex.source, "has_manifest": ex.has_manifest, "has_bot_files": ex.has_bot_files,
-            "manifest_packages": ex.manifest_packages, "global_values": ex.global_values,
+            "manifest_packages": ex.manifest_packages, "global_values": ex.global_values, "assets": ex.assets,
             "bots": {p: asdict(b) for p, b in ex.bots.items()}}
 
 
 def export_from_dict(d: dict) -> Export:
     ex = Export(source=d.get("source", ""), has_manifest=d.get("has_manifest", False),
                 has_bot_files=d.get("has_bot_files", False),
-                manifest_packages=d.get("manifest_packages", []), global_values=d.get("global_values", []))
+                manifest_packages=d.get("manifest_packages", []), global_values=d.get("global_values", []),
+                assets=d.get("assets", []))
     ex.bots = {p: Bot(**b) for p, b in d.get("bots", {}).items()}
     return ex
 
@@ -71,6 +72,8 @@ def merge_exports(base: Export, new: Export):
     have = {(x["name"], x["version"]) for x in base.manifest_packages}
     base.manifest_packages += [x for x in new.manifest_packages if (x["name"], x["version"]) not in have]
     base.global_values += [x for x in new.global_values if x not in base.global_values]
+    have_assets = {a["path"] for a in base.assets}
+    base.assets += [a for a in new.assets if a["path"] not in have_assets]
     base.has_manifest |= new.has_manifest
     base.has_bot_files |= new.has_bot_files
     return added, updated, same

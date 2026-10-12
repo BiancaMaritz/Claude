@@ -235,7 +235,11 @@ function viewCode() {
     h("div", {class: "card"}, h("h2", {}, `Current code: ${c.bots} bots`),
       c.sources.length ? h("ul", {class: "files"}, c.sources.map(s => h("li", {}, h("span", {}, s.name, h("small", {}, s.at ? "loaded " + fmt(s.at) : ""))))) : h("p", {class: "note"}, "No code loaded yet."),
       c.folders.length ? h("div", {class: "tw"}, h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Folder"), h("th", {}, "Bots"))),
-        h("tbody", {}, c.folders.map(f => h("tr", {}, h("td", {}, f.folder), h("td", {}, f.bots)))))) : null)];
+        h("tbody", {}, c.folders.map(f => h("tr", {}, h("td", {}, f.folder), h("td", {}, f.bots)))))) : null),
+    c.assets && c.assets.length ? h("div", {class: "card"}, h("h2", {}, `Other files in the export: ${c.assets.length}`),
+      h("p", {class: "note"}, "Forms, processes and other files that are not task bots. They are listed in the SDD, but their contents are not analysed yet."),
+      h("div", {class: "tw"}, h("table", {}, h("thead", {}, h("tr", {}, ["Name", "Type", "Folder"].map(x => h("th", {}, x)))),
+        h("tbody", {}, c.assets.map(a => h("tr", {}, h("td", {}, a.name), h("td", {}, a.kind), h("td", {}, a.folder || "-"))))))) : null];
 }
 
 function viewDocs() {

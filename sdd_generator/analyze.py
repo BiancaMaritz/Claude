@@ -63,6 +63,36 @@ def condition_text(c: dict) -> str:
     return f"{name}({args})" if args else name
 
 
+OPERATORS = {"INCLUDE": "contains", "NOT_INCLUDE": "does not contain", "NOTINCLUDE": "does not contain",
+             "GT": "is greater than", "LT": "is less than", "GE": "is at least", "LE": "is at most", "EQ": "equals",
+             "NE": "does not equal", "GTE": "is at least", "LTE": "is at most", "EQUALS": "equals", "NOT_EQUALS": "does not equal",
+             "STARTS_WITH": "starts with", "ENDS_WITH": "ends with", "EMPTY": "is empty", "NOT_EMPTY": "is not empty",
+             "GREATER_THAN": "is greater than", "LESS_THAN": "is less than", "GREATER_THAN_EQUALS": "is at least",
+             "LESS_THAN_EQUALS": "is at most", "IS_TRUE": "is true", "IS_FALSE": "is false"}
+FLAG_ARGS = {"matchCase", "isIgnoreCarriage", "isCaseSensitive", "waitTimeout", "session"}
+
+
+def cond_text(node):
+    """Readable condition of an If / Else If / While action, including its arguments.
+
+    The arguments sit in the condition attribute's own attribute list, next to the value that names
+    the condition, so both are needed.
+    """
+    for a in node.get("attributes", []) or []:
+        if a.get("name") != "condition":
+            continue
+        v = a.get("value") or {}
+        name = v.get("conditionalName", "condition")
+        args = {x.get("name"): val(x.get("value")) for x in a.get("attributes", []) or [] if x.get("name") not in FLAG_ARGS}
+        args = {k: x for k, x in args.items() if x not in ("", None)}
+        if name.endswith("Variable") and "variable" in args and "operator" in args:
+            op = OPERATORS.get(args["operator"].upper(), args["operator"].lower().replace("_", " "))
+            return clean_var(f"{args['variable']} {op}" + (f" {args['value']}" if "value" in args else ""))
+        words_ = camel_words(name)
+        return clean_var(f"{words_}({', '.join(f'{k}={x}' for k, x in args.items())})" if args else words_)
+    return ""
+
+
 def attr(node, name):
     for a in node.get("attributes", []) or []:
         if a.get("name") == name:
@@ -131,9 +161,8 @@ def analyse_bot(bot) -> dict:
         elif cmd == "Comment":
             d["comments"].append(val(attr(n, "comment")))
         elif cmd in ("if", "elseIf", "while"):
-            cond = attr(n, "condition")
             ctx = step_label(steps_above[-1]) if steps_above else ""
-            d["decisions"].append((ctx, cmd, condition_text(cond) if cond else ""))
+            d["decisions"].append((ctx, cmd, cond_text(n)))
         elif cmd == "runTask":
             tb = attr(n, "taskbot") or {}
             target = norm((tb.get("taskbotFile") or {}).get("string", ""))
@@ -160,6 +189,10 @@ def analyse_bot(bot) -> dict:
             for t, c in cols.items():
                 d["tables"][t]["columns"].update(c)
     d["tables"] = {k: v for k, v in d["tables"].items()}
+    from .flow import bot_flow  # imported here: flow builds on this module
+
+    d["flow"] = bot_flow(bot.nodes)
+    d["flow_kind"] = "steps" if d["steps"] else "actions"
     return d
 
 

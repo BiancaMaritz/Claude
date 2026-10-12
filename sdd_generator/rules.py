@@ -17,7 +17,7 @@ import hashlib
 import json
 import re
 
-from .analyze import attr, condition_text, step_label, val, walk
+from .analyze import attr, cond_text, step_label, val, walk
 from .gaps import _strings, words
 from .docparse import letters
 
@@ -127,12 +127,11 @@ def code_units(ex):
                     u["times"][int(m.group(1)) * UNIT_SECONDS[m.group(2).lower()]] = _time_label(int(m.group(1)), m.group(2).lower())
                 u["counts"] |= {int(x) for x in SQL_RETRY.findall(sql)}
             if cmd in ("if", "elseIf", "while"):
-                cond = attr(n, "condition")
-                if cond:
-                    text = condition_text(cond)
+                text = cond_text(n)
+                if text:
                     texts.append(text)
                     if RETRY_WORDS.search(text) or RETRY_WORDS.search(label):
-                        u["counts"] |= {int(x) for x in re.findall(r"=\s*(\d+)\b", text)}
+                        u["counts"] |= {int(x) for x in re.findall(r"(?:=|equals|than|least|most)\s*\{?(\d+)\b", text)}
             rt = n.get("returnTo") or {}
             if rt.get("variableName"):
                 u["vars"].add(rt["variableName"])

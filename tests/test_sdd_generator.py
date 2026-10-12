@@ -1012,3 +1012,96 @@ def test_differences_appear_in_the_sdd_and_through_the_api(tmp_path, client):
     assert client.app.store.get("R")["acceptances"]
     assert post("/api/rules/reopen", {"doc": "R", "id": fid})[1]["ok"]
     assert json.loads(client.call("GET", "/api/analysis?name=R")[1])["rules"]["summary"]["open"] == 1
+
+
+# ------------------------------------------------------- process flow from code ---
+
+def if_node(name, args, children=(), cmd="if"):
+    return {"commandName": cmd, "packageName": "If", "children": list(children), "branches": [], "attributes": [
+        {"name": "condition", "attributes": [{"name": k, "value": {"type": "STRING", "string": v}} for k, v in args.items()],
+         "value": {"type": "CONDITIONAL", "conditionalName": name, "packageName": "String"}}]}
+
+
+def loop_node(children):
+    return {"commandName": "loop.commands.start", "packageName": "Loop", "children": list(children), "attributes": [
+        {"name": "loopType", "value": {"type": "STRING", "string": "ITERATOR"}},
+        {"name": "iterator", "returnTo": {"type": "VARIABLE", "variableName": "Row"},
+         "attributes": [{"name": "sourceTable", "value": {"type": "VARIABLE", "variableName": "Contracts"}}],
+         "value": {"type": "ITERATOR", "iteratorName": "iteratorTableRow", "packageName": "DataTable"}}]}
+
+
+def assign(var, text="x"):
+    return {"commandName": "assign", "packageName": "String", "attributes": attrs(sourceString=text),
+            "returnTo": {"type": "VARIABLE", "variableName": var}}
+
+
+def test_every_bot_gets_a_process_flow_even_without_named_steps(tmp_path):
+    bots = {
+        R + "Acme/Main": bot([run_task(R + "Acme/Assign BU"), run_task(R + "Acme/Quiet")]),
+        R + "Acme/Assign BU": bot([
+            assign("A"), assign("B"), assign("C"),
+            if_node("stringVariable", {"variable": "$BU$", "operator": "INCLUDE", "value": "Sugar"},
+                    [sql("UPDATE [dbo].[Contracts] SET [BU] = 1 WHERE [Id] = 2"),
+                     {"commandName": "messageBox", "packageName": "MessageBox", "attributes": attrs(title="Done")}]),
+            if_node("stringVariable", {}, [], cmd="else"),
+            loop_node([run_task(R + "Acme/Quiet")]),
+        ]),
+        R + "Acme/Quiet": bot([]),
+    }
+    ex = _code(tmp_path, bots)
+    a = analyse(ex)
+    md = to_markdown(build(ex, a, {}, title="T", date="x"))
+    sec = md[md.index("### a. To Be Process Flow Steps"):md.index("### b. Changes brought")]
+    assert "[TO BE COMPLETED]: bot has no named Step actions" not in md
+    assert "This bot has no named Step actions, so its steps are its actions, in order." in sec
+    assert "| 1 | [Screenshot] | Run bot Assign BU |" in sec and "| 2 | [Screenshot] | Run bot Quiet |" in sec
+    # a bot that other bots call is not an entry point; its flow is in Appendix A, not blank
+    apx = md[md.index("## Appendix A."):md.index("## Appendix B.")]
+    for line in ("Set 3 variables: A, B, C", "If {BU} contains Sugar", "Database: Update Contracts",
+                 "Show a message box: Done", "Otherwise", "For each table row in {Contracts} (as Row)", "Run bot Quiet"):
+        assert line in apx, line
+    assert "| 2.1 | Database: Update Contracts |" in apx          # the numbering shows the nesting under the If
+
+
+def test_named_steps_say_what_they_do(tmp_path):
+    ex = _code(tmp_path, {R + "Acme/Main": bot([
+        step("Prepare", [assign("A"), assign("B")]),
+        step("Update jobs", [sql("UPDATE [dbo].[Jobs] SET [S] = 1"), run_task(R + "Acme/Main"),
+                             if_node("stringVariable", {"variable": "$X$", "operator": "EQUALS", "value": "1"})]),
+        step("Outer", [step("Inner", [assign("C")])])])})
+    sec = to_markdown(build(ex, analyse(ex), {}, title="T", date="x"))
+    flat = sec.replace("<br>", " | ")
+    assert "Prepare | Does: sets 2 variables" in flat
+    assert "Update jobs | Does: runs Main; database: update Jobs; 1 decision" in flat
+    assert "Inner | Does: sets 1 variable" in flat and "Outer |" in flat and "| 3.1 |" in flat
+
+
+def test_conditions_keep_their_arguments(tmp_path):
+    from sdd_generator.analyze import cond_text
+
+    assert cond_text(if_node("stringVariable", {"variable": "$Date$", "operator": "NOTINCLUDE", "value": "Aug"})) == "{Date} does not contain Aug"
+    assert cond_text(if_node("folderDoesNotExists", {"folderPath": "$Root$"})) == "folder does not exists(folderPath={Root})"
+    assert cond_text(if_node("numberVariable", {"variable": "$N$", "operator": "GT", "value": "365"})) == "{N} is greater than 365"
+
+
+def test_non_bot_files_are_listed_not_dropped(export_dir, tmp_path):
+    from sdd_generator.store import export_from_dict, export_to_dict
+
+    # a form and a process: in the manifest, and a process file whose nodes are not actions
+    m = json.loads((export_dir / "manifest.json").read_text())
+    m["files"] += [{"path": "Automation Anywhere\\Bots\\Acme\\Forms\\ContractForm", "contentType": "application/vnd.aa.form",
+                    "scannedDependencies": [], "description": ""},
+                   {"path": "Automation Anywhere\\Bots\\Acme\\Procs\\Select Unit Process", "contentType": "application/vnd.aa.process",
+                    "scannedDependencies": [], "description": ""},
+                   {"path": "Automation Anywhere\\Bots\\Acme\\Procs\\x.png", "contentType": "image/png"}]
+    (export_dir / "manifest.json").write_text(json.dumps(m))
+    proc = export_dir / "Automation Anywhere" / "Bots" / "Acme" / "Procs" / "Select Unit Process"
+    proc.parent.mkdir(parents=True, exist_ok=True)
+    proc.write_text(json.dumps({"nodes": [{"type": "TASKBOT", "id": "1"}], "edges": []}))
+    ex = load_export(str(export_dir))
+    assert "Automation Anywhere/Bots/Acme/Procs/Select Unit Process" not in ex.bots           # not mistaken for a bot
+    assert {(a["kind"], a["path"].rsplit("/", 1)[-1]) for a in ex.assets} == {("Form", "ContractForm"), ("Process", "Select Unit Process")}
+    assert export_from_dict(export_to_dict(ex)).assets == ex.assets                          # kept when stored
+    md = to_markdown(build(ex, analyse(ex), {}, title="T", date="x"))
+    sec = md[md.index("#### Other files in the export"):md.index("### c. Triggers")]
+    assert "| ContractForm | Form | Acme/Forms |" in sec and "Select Unit Process | Process |" in sec and "x.png" not in sec

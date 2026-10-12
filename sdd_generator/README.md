@@ -34,6 +34,9 @@ Opens http://localhost:8765/ (bound to 127.0.0.1 only). Elsewhere: `python -m sd
 
 Details worth knowing:
 
+- **No process flow is ever blank.** A bot with named Step actions is shown as its Steps, each with a line on what it does (bots run, tables touched, calls made, counts of the rest). A bot without any is shown as its actions in order, nested under If / Loop / Try, with runs of variable assignments collapsed, so the flow always comes from the code. Entry-point bots are in section 2a; the flows of bots that other bots call are in Appendix A.
+- **Other files in the export.** Forms, processes and any JSON that is not a task bot are listed (Code tab, SDD section 3b), not dropped. Their contents are not analysed yet.
+
 - Code loads: only bot and manifest JSON is read, so a multi-gigabyte export loads in well under a second. Zips are fingerprinted by entry size and CRC, so renaming a file does not fool the reload check. A manifest-only record never erases bot logic already stored.
 - Replacing code keeps documentation, videos, graphs and tables; replacing documentation keeps code; and so on. Each input is independent.
 - Documentation sections are recognised by title whatever the numbering. Text and tables are read; screenshots and diagrams are not (add them under Graphs).
