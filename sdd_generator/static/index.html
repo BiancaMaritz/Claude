@@ -74,6 +74,15 @@ main details{max-width:980px;margin:0 auto 40px;padding:0 4px;color:var(--mut);f
     <div class="row"><select id="docSel" aria-label="Document"></select><button id="newBtn" title="Create a new document">New</button></div>
     <div id="newRow" class="row" hidden style="margin-top:8px"><input id="newName" type="text" placeholder="Document name" maxlength="60"><button id="newOk">OK</button></div>
     <p class="note" id="dataDir"></p>
+    <div id="recover" hidden>
+      <p class="note"><b>Stored documents were found in other folders.</b> They are not in the folder this app uses now.</p>
+      <ul class="files" id="recoverList"></ul>
+    </div>
+    <details class="note"><summary>Recover documents from a folder</summary>
+      <input id="rpath" type="text" placeholder="C:\Dev\sdd-generator\sdd-generator\data\documents">
+      <div class="row" style="margin-top:6px"><button id="rbtn" class="tiny">Recover</button></div>
+      <div class="msg" id="rmsg" role="status"></div>
+    </details>
   </div>
 
   <details class="box" id="codeBox" open>
@@ -166,7 +175,36 @@ async function refreshDocs(select) {
   if (docs.some(d => d.name === want)) sel.value = want;
   current = docs.length ? sel.value : current;
   await showDoc();
+  checkRecover();
 }
+
+async function recover(folder) {
+  const j = await post("/api/recover", {folder});
+  const n = Object.entries(j.imported).map(([a, b]) => a === b ? a : `${a} as ${b}`);
+  return n;
+}
+
+async function checkRecover() {
+  let found = [];
+  try { found = await api("/api/recover"); } catch (e) { return; }
+  $("recover").hidden = !found.length;
+  const ul = $("recoverList"); ul.replaceChildren();
+  for (const f of found) {
+    const b = document.createElement("button"); b.className = "tiny"; b.textContent = "Import";
+    b.addEventListener("click", async () => {
+      try { const n = await recover(f.folder); say("rmsg", n.length ? "Recovered: " + n.join(", ") : "Nothing to import.", "ok"); await refreshDocs(); }
+      catch (e) { say("rmsg", e.message, "err"); }
+    });
+    li(ul, f.folder, f.documents.join(", "), b);
+  }
+}
+
+$("rbtn").addEventListener("click", async () => {
+  const f = $("rpath").value.trim();
+  if (!f) { say("rmsg", "Enter a folder path.", "err"); return; }
+  try { const n = await recover(f); say("rmsg", "Recovered: " + n.join(", "), "ok"); $("rpath").value = ""; await refreshDocs(); }
+  catch (e) { say("rmsg", e.message, "err"); }
+});
 
 function li(parent, text, sub, btn) {
   const l = document.createElement("li");

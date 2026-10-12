@@ -24,7 +24,7 @@ from .docparse import parse_document
 from .document import build
 from .loader import load_export
 from .render import to_docx, to_html, to_markdown
-from .store import Store, export_from_dict, valid_name
+from .store import Store, export_from_dict, find_stored_documents, valid_name
 
 CHUNK = 1024 * 1024
 STATIC = os.path.join(os.path.dirname(__file__), "static")
@@ -149,6 +149,17 @@ class App:
         shutil.rmtree(self.staging, ignore_errors=True)  # leftovers from a previous run
         os.makedirs(self.staging)
         self._staged = {}  # token -> (label, path)
+        self.code_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def elsewhere(self):
+        """Stored documents found in other folders, so a changed install location never hides them."""
+        roots = [self.code_root, os.path.dirname(self.code_root)]
+        if os.name == "nt":
+            roots.append(r"C:\Dev\sdd-generator")
+        have = {d["name"] for d in self.store.list()}
+        # only what this install does not already hold, so the notice goes away once recovered
+        return [(f, [n for n in names if n not in have]) for f, names in find_stored_documents(self.store.root, roots)
+                if any(n not in have for n in names)]
 
     def stage(self, label, rfile, length):
         """Stream an upload to disk in chunks, so file size never depends on memory."""
@@ -237,6 +248,8 @@ def make_handler(app: App, port: int):
                     return self._send(200, fh.read().replace(b"@@VERSION@@", __version__.encode()))
             if path == "/api/docs":
                 return self._json(app.store.list())
+            if path == "/api/recover":
+                return self._json([{"folder": f, "documents": n} for f, n in app.elsewhere()])
             if path == "/api/doc":
                 name = (q.get("name") or [""])[0]
                 res = app.generate(name)
@@ -320,6 +333,10 @@ def make_handler(app: App, port: int):
                     finally:
                         app.drop_staged(tokens)
                     return self._json({"ok": True, "name": name, "report": report})
+                if u.path == "/api/recover":
+                    req = json.loads(body or b"{}")
+                    got = app.store.import_from(str(req.get("folder", "")))
+                    return self._json({"ok": True, "imported": got})
                 if u.path == "/api/documentation/remove":
                     req = json.loads(body or b"{}")
                     return self._json({"ok": app.store.remove_doc(str(req.get("doc", "")), str(req.get("fp", "")))})
@@ -373,7 +390,15 @@ def main(argv=None):
     moved = migrate_legacy(args.data_dir)
     if moved:
         print(f"Copied {moved} stored document(s) from the old location into {args.data_dir}")
-    server.RequestHandlerClass = make_handler(App(args.data_dir), args.port)
+    app = App(args.data_dir)
+    if not app.store.list():  # nothing here yet: bring across anything an earlier install left behind
+        newest = lambda f: max(os.path.getmtime(os.path.join(f, n)) for n in os.listdir(f) if n.endswith(".sdd.json"))
+        for folder, names in sorted(app.elsewhere(), key=lambda fn: newest(fn[0]), reverse=True):
+            got = app.store.import_from(folder, rename=False)  # newest copy of each document wins
+            print(f"Recovered {len(got)} document(s) from {folder}: {', '.join(got.values())}")
+    for folder, names in app.elsewhere():
+        print(f"Note: other stored documents exist in {folder} ({', '.join(names)}). Use Recover in the page to import them.")
+    server.RequestHandlerClass = make_handler(app, args.port)
     url = f"http://localhost:{args.port}/"
     print(f"SDD Generator v{__version__} running at {url}\nDocuments stored in {args.data_dir}\nCtrl+C to stop")
     if not args.no_browser:

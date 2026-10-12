@@ -251,3 +251,65 @@ class Store:
         doc["documentation"] = keep
         self.save(name, doc)
         return True
+
+    # ----------------------------------------------------------------- recovery ---
+
+    def import_from(self, folder, rename=True):
+        """Copy stored documents from another folder into this one. Never overwrites anything.
+
+        A document whose name is already taken arrives under a new name ("Lucy recovered-1"), or is
+        skipped when rename is False.
+        """
+        folder = os.path.abspath(folder.strip().strip('"').strip("'"))
+        if not os.path.isdir(folder):
+            raise ValueError(f"{folder}: not a folder.")
+        if os.path.abspath(self.root) == folder:
+            raise ValueError("That is the folder the app already uses.")
+        names = [f[:-9] for f in sorted(os.listdir(folder)) if f.endswith(".sdd.json")]
+        if not names:
+            raise ValueError(f"{folder}: no stored documents (*.sdd.json) in that folder.")
+        imported = {}
+        for n in names:
+            try:
+                with open(os.path.join(folder, n + ".sdd.json"), encoding="utf-8") as fh:
+                    if "export" not in json.load(fh):
+                        continue
+            except (ValueError, OSError):
+                continue
+            target, i = n, 0
+            while os.path.exists(self._path(target)):
+                if not rename:
+                    break
+                i += 1
+                target = f"{n} recovered-{i}"
+            if os.path.exists(self._path(target)):
+                continue
+            if valid_name(target):
+                shutil.copy2(os.path.join(folder, n + ".sdd.json"), self._path(target))
+                imported[n] = target
+        return imported
+
+
+def find_stored_documents(data_dir, roots, max_depth=4):
+    """Folders other than data_dir that hold stored documents: [(folder, [document names])].
+
+    Looks for data/documents folders under the given roots, which is where earlier versions kept
+    them, including inside a nested copy of the code folder.
+    """
+    skip = {".git", ".venv", "node_modules", "backups", "__pycache__", "staging"}
+    here = os.path.abspath(data_dir)
+    found, seen = [], set()
+    for root in roots:
+        root = os.path.abspath(root)
+        if not os.path.isdir(root) or root == os.path.dirname(root):  # never walk a whole drive
+            continue
+        base = root.count(os.sep)
+        for r, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if d not in skip]
+            if r.count(os.sep) - base >= max_depth:
+                dirs[:] = []
+            names = sorted(f[:-9] for f in files if f.endswith(".sdd.json"))
+            if names and os.path.abspath(r) != here and os.path.abspath(r) not in seen:
+                seen.add(os.path.abspath(r))
+                found.append((os.path.abspath(r), names))
+    return found

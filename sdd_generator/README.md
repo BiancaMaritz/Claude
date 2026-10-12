@@ -35,7 +35,7 @@ Opens http://localhost:8765/ (bound to 127.0.0.1 only). Elsewhere: `python -m sd
 
 ### Where your data lives
 
-Everything you load is stored automatically, as soon as you load it, in `C:\Dev\sdd-generator\data\documents` (set by `run.bat` through `SDD_DATA_DIR`; the page shows the folder in use). You never need to load anything again. Every save keeps the previous version in `backups\<document>\` (the last 10), and deleting a document leaves a copy there too. Documents stored beside the code by older versions are copied across once, automatically.
+Everything you load is stored automatically, as soon as you load it, in `C:\Dev\sdd-generator\data\documents` (set by `run.bat` through `SDD_DATA_DIR`; the page shows the folder in use). You never need to load anything again. Every save keeps the previous version in `backups\<document>\` (the last 10), and deleting a document leaves a copy there too. If an install ever points at a different folder (for example after unzipping into a nested folder), the app looks for stored documents in the folders around it. When its own folder is empty it copies them across automatically at start-up. Otherwise the page shows them with an Import button, and "Recover documents from a folder" takes any folder by path. Recovery copies and never overwrites; a name clash arrives as "Lucy recovered-1".
 
 ### Updates
 

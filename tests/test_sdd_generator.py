@@ -542,3 +542,36 @@ def test_legacy_documents_are_copied_once_and_never_overwrite(tmp_path, monkeypa
     assert web.migrate_legacy(str(new)) == 0                       # data already there: nothing is touched
     assert (new / "Lucy.sdd.json").read_text() == '{"new": true}'
     assert web.migrate_legacy(str(legacy)) == 0                    # same folder: nothing to do
+
+
+def test_documents_survive_a_restart_and_a_moved_install(tmp_path):
+    from sdd_generator.store import Store, find_stored_documents
+
+    old = tmp_path / "Dev" / "sdd-generator" / "sdd-generator" / "data" / "documents"   # nested by an unzip
+    s_old = Store(str(old))
+    s_old.load_docs("Lucy", "add", [_doc_from(tmp_path)], [])
+    assert Store(str(old)).get("Lucy")["documentation"]                  # a new process sees it: it is on disk
+    new = tmp_path / "Dev" / "sdd-generator" / "data" / "documents"       # where the new install keeps data
+    s_new = Store(str(new))
+    found = find_stored_documents(str(new), [str(tmp_path / "Dev" / "sdd-generator")])
+    assert found == [(str(old), ["Lucy"])]
+    assert s_new.import_from(str(old), rename=False) == {"Lucy": "Lucy"}
+    assert s_new.import_from(str(old), rename=False) == {}               # not duplicated
+    assert s_new.import_from(str(old)) == {"Lucy": "Lucy recovered-1"}   # manual import never overwrites
+    assert s_new.get("Lucy")["documentation"] and s_new.get("Lucy recovered-1")["documentation"]
+    with pytest.raises(ValueError):
+        s_new.import_from(str(new))
+
+
+def test_web_recover_endpoint(tmp_path, client):
+    from sdd_generator.store import Store
+
+    other = tmp_path / "elsewhere"
+    Store(str(other)).load_docs("Lucy", "add", [_doc_from(tmp_path)], [])
+    code, body = client.call("POST", "/api/recover", json.dumps({"folder": str(other)}).encode(),
+                             {"Content-Type": "application/json"})
+    assert code == 200 and json.loads(body)["imported"] == {"Lucy": "Lucy"}
+    assert json.loads(client.call("GET", "/api/docs")[1])[0]["name"] == "Lucy"
+    code, body = client.call("POST", "/api/recover", json.dumps({"folder": str(tmp_path / "nope")}).encode(),
+                             {"Content-Type": "application/json"})
+    assert code == 400
