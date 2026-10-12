@@ -18,13 +18,14 @@ run.bat
 
 Opens http://localhost:8765/ (bound to 127.0.0.1 only). Elsewhere: `python -m sdd_generator.web [--port N] [--data-dir DIR]`.
 
-**Layout.** The left menu starts with **Select Project**. Once a project is chosen, its menu opens: **SDD, Code, Documentation, Videos, Graphs, Tables**. Clicking one shows its actions on the right. A new project starts at Code. Every load is saved at once; nothing needs reloading.
+**Layout.** The left menu starts with **Select Project**. Once a project is chosen, its menu opens: **SDD, Analysis, Code, Documentation, Videos, Graphs, Tables**. Clicking one shows its actions on the right. A new project starts at Code. Every load is saved at once; nothing needs reloading.
 
 **Priority.** What the code shows always wins. Next comes intake you typed in. Everything else only fills what would otherwise be `[TO BE COMPLETED]` or missing, and each passage sits under a blue caption naming its source, because it was not verified against the code.
 
 | Menu | What you do there | What it adds to the SDD |
 |---|---|---|
 | **SDD** | Read the current SDD, generated from everything loaded each time you open it. Download Word or Markdown. The section list sits under the menu item, with open-item and from-docs counts. | |
+| **Analysis** | See which bots you still need to provide and which documented steps the code does not cover. **Certain**: a bot calls another bot that is not in the export, or the manifest lists a bot whose file is missing. **Likely**: documentation lists a bot component that no bot in the code matches (steps with no code point at the documented bot that fits them). **Possible**: an exported table that no SQL in the code touches. Documented steps are matched to the code by shared words (bot names, step labels, comments, variables, constants, packages used), with the evidence shown. Download the list as CSV. | Nothing: it is a to-do list. |
 | **Code** | **Update: only what changed** merges the bots in the files into the stored code (use it when one part changed). **Replace everything** is a fresh reload. Zips of any size, or a path. Reloading identical content says "No changes". | Everything technical: bots, calls, I/O, applications, triggers, tables the SQL touches, review findings. |
 | **Documentation** | Old SDDs (`.pdf`, `.docx`, `.md`), several at once or a folder, plus an optional intake `.json`. Add, replace all, or remove one. | Process description, MoSCoW, requirements, benefits, stakeholders, rules, documented flows, triggers, reports, access details, and documented bots missing from the code. |
 | **Videos** | Upload a video (stored) or give a path (linked, not copied). It plays in the app. Attach a transcript (`.srt`, `.vtt`, `.txt`, `.md`, `.docx`) and pick the SDD section it belongs in. | The transcript text, in the chosen section or Appendix H. The audio itself is not read; a video without a transcript adds nothing. |

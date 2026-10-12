@@ -765,3 +765,100 @@ def test_new_endpoints_end_to_end(export_dir, tmp_path, client):
     kept = client.app.store.get("P")
     assert kept["tables"] and kept["graphs"] and len(kept["videos"]) == 1
     assert post("/api/tables/remove", {"doc": "P", "table": "Jobs"})[1]["ok"]
+
+
+# ------------------------------------------------------------------ analysis ---
+
+def _doc_with(process_rows, bot_rows):
+    return {"name": "Old.pdf", "fp": "f" * 64, "kind": "pdf", "pages": 3, "sections": {
+        "process_flow": {"page": 5, "blocks": [("table", process_rows)]},
+        "bot_components": {"page": 7, "blocks": [("table", bot_rows)]}}}
+
+
+def _code(tmp_path, bots):
+    root = tmp_path / "code"
+    for p, d in bots.items():
+        f = root / p
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(d))
+    return load_export(str(root))
+
+
+def test_analysis_finds_missing_bots_and_uncovered_steps(tmp_path):
+    from sdd_generator.gaps import analyse_gaps
+
+    bots = {
+        R + "Acme/Logic Manager/Orchestrator": bot([step("Run", [run_task(R + "Acme/Common/Shoprite Login"),
+                                                                  run_task(R + "Acme/Common/Missing Helper")])]),
+        R + "Acme/Common/Shoprite Login": bot([step("Login to the Shoprite portal")]),
+        R + "Acme/Work/Rebate Downloader": bot([step("Download rebate claims for the week")]),
+        R + "Acme/Work/Filler": bot([step("Initialize variables")]),
+        R + "Acme/Work/Filler2": bot([step("Initialize variables")]),
+        R + "Acme/Work/Filler3": bot([step("Initialize variables")]),
+    }
+    ex = _code(tmp_path, bots)
+    doc = _doc_with(
+        [["Scenario: SC1", "", ""], ["Step", "Screen Shot", "Description"],
+         ["1", "", "• Login to the Shoprite Supplier Portal."],
+         ["2", "", "• Download the rebate claims for the week."],
+         ["3", "", "• Send the claims to the Zorblax gateway."]],
+        [["Bot", "Description"], ["Main Bot 1", "Logic Manager"], ["Sub Bot 1", "Shoprite Login Bot"],
+         ["Sub Bot 2", "Zorblax Sender Bot"]])
+    tables = [{"name": "Orphan", "source": "Orphan.csv", "rows": 1, "fp": "x", "columns": []}]
+    res = analyse_gaps(ex, analyse(ex), [doc], tables)
+    by = {e["name"]: e for e in res["bots"]}
+    assert by["Missing Helper"]["confidence"] == "Certain" and "Called by Orchestrator" in by["Missing Helper"]["reasons"][0]
+    assert by["Missing Helper"]["where"] == ["Bots/Acme/Common/Missing Helper"]
+    assert by["Zorblax Sender Bot"]["confidence"] == "Likely"
+    assert any("Documented step 3" in r for r in by["Zorblax Sender Bot"]["reasons"])    # the uncovered step points at it
+    assert "Shoprite Login Bot" not in by and "Logic Manager" not in by               # documented and present in the code
+    assert by["A bot that uses table Orphan"]["confidence"] == "Possible"
+    status = {s["step"]: s["status"] for s in res["steps"]}
+    assert status == {"1": "Covered", "2": "Covered", "3": "Not found"}
+    s1 = res["steps"][0]
+    assert s1["best"] == "Shoprite Login" and {"login", "shoprite"} <= set(s1["matched"])
+    sm = res["summary"]
+    assert (sm["certain"], sm["likely"], sm["possible"], sm["to_provide"]) == (1, 1, 1, 2)
+    assert (sm["documented_bots"], sm["documented_found"]) == (3, 2)
+    assert [e["confidence"] for e in res["bots"]] == ["Certain", "Likely", "Possible"]   # strongest evidence first
+
+
+def test_analysis_without_docs_or_code_and_manifest_gap(export_dir, tmp_path):
+    from sdd_generator.gaps import analyse_gaps, to_csv
+    from sdd_generator.loader import Export
+
+    empty = Export(source="x")
+    r = analyse_gaps(empty, analyse(empty), [], [])
+    assert r["bots"] == [] and "No code is loaded" in r["notes"][0]
+    ex = load_export(str(export_dir))
+    r = analyse_gaps(ex, analyse(ex), [], [])
+    assert r["notes"] and "No documentation" in r["notes"][0] and r["bots"] == []
+    # the manifest lists a bot whose file is not in the export
+    m = json.loads((export_dir / "manifest.json").read_text())
+    m["files"].append({"path": "Automation Anywhere\\Bots\\Acme\\Work\\Ghost", "contentType": "application/vnd.aa.taskbot",
+                       "scannedDependencies": [], "description": ""})
+    (export_dir / "manifest.json").write_text(json.dumps(m))
+    ex = load_export(str(export_dir))
+    r = analyse_gaps(ex, analyse(ex), [], [])
+    assert [(e["name"], e["confidence"]) for e in r["bots"]] == [("Ghost", "Certain")]
+    assert "manifest" in r["bots"][0]["reasons"][0]
+    csv_text = to_csv(r)
+    assert csv_text.splitlines()[0].startswith("Bot to provide,Confidence") and "Ghost" in csv_text
+
+
+def test_unrelated_code_is_not_called_covered(export_dir, tmp_path):
+    from sdd_generator.gaps import analyse_gaps
+
+    ex = load_export(str(export_dir))
+    doc = _doc_with([["1", "", "• Push files for storage to the correct folder as per the retailer."]], [["Bot", "Description"]])
+    steps = analyse_gaps(ex, analyse(ex), [doc], [])["steps"]
+    assert steps and steps[0]["status"] != "Covered"
+
+
+def test_analysis_endpoints(export_dir, tmp_path, client):
+    client.load("A", [("a.zip", zip_of(export_dir))])
+    j = json.loads(client.call("GET", "/api/analysis?name=A")[1])
+    assert j["summary"]["has_code"] and j["bots"] == [] and j["notes"]
+    code, body = client.call("GET", "/download/A/analysis")
+    assert code == 200 and body.startswith(b"\xef\xbb\xbfBot to provide")
+    assert client.call("GET", "/api/analysis?name=Nope")[0] == 404

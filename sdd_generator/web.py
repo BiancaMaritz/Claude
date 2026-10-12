@@ -25,6 +25,7 @@ from . import __version__
 from .analyze import analyse
 from .docparse import parse_document
 from .document import build
+from .gaps import analyse_gaps, to_csv as gaps_csv
 from .loader import load_export
 from .media import (CONTENT_TYPES, IMAGE_EXT, SECTION_KEYS, SECTIONS, TRANSCRIPT_EXT, VIDEO_EXT, ext_of,
                     new_id, parse_transcript)
@@ -176,6 +177,7 @@ class App:
     def __init__(self, data_dir):
         self.store = Store(data_dir)
         self._cache = {}
+        self._gap_cache = {}
         self.staging = os.path.join(os.path.dirname(os.path.abspath(data_dir)), "staging")
         shutil.rmtree(self.staging, ignore_errors=True)  # leftovers from a previous run
         os.makedirs(self.staging)
@@ -246,6 +248,20 @@ class App:
         self._cache[name] = (key, blocks)
         return doc, blocks
 
+    def gaps(self, name):
+        """The Analysis tab's result for a stored project, or None."""
+        doc = self.store.get(name)
+        if doc is None:
+            return None
+        key = (doc["updated"], doc.get("rev", 0))
+        hit = self._gap_cache.get(name)
+        if hit and hit[0] == key:
+            return hit[1]
+        ex = export_from_dict(doc["export"])
+        res = analyse_gaps(ex, analyse(ex), doc["documentation"], doc["tables"])
+        self._gap_cache[name] = (key, res)
+        return res
+
     def summary(self, name):
         """Everything the menu views need about a project, without building the SDD."""
         doc = self.store.get(name)
@@ -275,6 +291,8 @@ class App:
             "graphs": [dict(item(g), url=f"/media/{name}/{g['id']}") for g in doc["graphs"]],
             "tables": doc["tables"],
             "history": doc["history"][-12:][::-1],
+            "gaps": ({k: g["summary"][k] for k in ("to_provide", "steps_missing")}
+                     if (g := self.gaps(name)) else {"to_provide": 0, "steps_missing": 0}),
         }
 
     def _media_path(self, name, item):
@@ -402,6 +420,9 @@ def make_handler(app: App, port: int):
                 return self._json(app.store.list())
             if path == "/api/recover":
                 return self._json([{"folder": f, "documents": n} for f, n in app.elsewhere()])
+            if path == "/api/analysis":
+                res = app.gaps((q.get("name") or [""])[0])
+                return self._json(res) if res else self._json({"error": "No such project."}, 404)
             if path == "/api/project":
                 res = app.summary((q.get("name") or [""])[0])
                 return self._json(res) if res else self._json({"error": "No such project."}, 404)
@@ -425,6 +446,11 @@ def make_handler(app: App, port: int):
                                        "sections": sorted(d["sections"])} for d in doc["documentation"]],
                     "data_dir": app.store.root})
             parts = path.strip("/").split("/")
+            if len(parts) == 3 and parts[0] == "download" and parts[2] == "analysis":
+                res = app.gaps(parts[1])
+                if res:
+                    return self._send(200, ("\ufeff" + gaps_csv(res)).encode("utf-8"), "text/csv; charset=utf-8",
+                                      {"Content-Disposition": f'attachment; filename="{parts[1].replace(" ", "_")}_missing_bots.csv"'})
             if len(parts) == 3 and parts[0] == "download":
                 res = app.generate(parts[1])
                 fmt = parts[2]

@@ -45,6 +45,14 @@ button:disabled{opacity:.5;cursor:default}
 #menu .tags{display:flex;gap:4px;align-self:flex-start;flex-wrap:wrap;justify-content:flex-end}
 .badge{background:var(--todo-bg);color:var(--todo-fg);border-radius:10px;padding:0 7px;font-size:11px;white-space:nowrap;font-weight:400}
 .badge.doc{background:var(--doc-bg);color:var(--doc-fg)}
+.pill{display:inline-block;border-radius:10px;padding:0 8px;font-size:11px;font-weight:600;white-space:nowrap}
+.pill.red{background:#fde2e0;color:#8c1d14}.pill.amber{background:var(--todo-bg);color:var(--todo-fg)}.pill.green{background:#d9f2e1;color:#14582b}.pill.grey{background:var(--bg);color:var(--mut);border:1px solid var(--line)}
+@media (prefers-color-scheme:dark){.pill.red{background:#5a1f1a;color:#ffb3ab}.pill.green{background:#16432a;color:#9be3b4}}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:0 0 16px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.stat b{display:block;font-size:24px;line-height:1.2}.stat span{color:var(--mut);font-size:12px}
+.method{font-size:13px;color:var(--mut);margin:0 0 16px}.method summary{cursor:pointer}
+td ul{margin:0;padding-left:16px}
 
 /* right side */
 .bar{position:sticky;top:0;z-index:2;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 24px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
@@ -133,7 +141,7 @@ async function api(url, opts) {
 const post = (url, obj) => api(url, {method: "POST", body: JSON.stringify(obj), headers: {"Content-Type": "application/json"}});
 
 const VIEWS = [
-  {id: "sdd", label: "SDD"}, {id: "code", label: "Code"}, {id: "docs", label: "Documentation"},
+  {id: "sdd", label: "SDD"}, {id: "analysis", label: "Analysis"}, {id: "code", label: "Code"}, {id: "docs", label: "Documentation"},
   {id: "videos", label: "Videos"}, {id: "graphs", label: "Graphs"}, {id: "tables", label: "Tables"}];
 const S = {project: null, view: "sdd", info: null, sdd: null, flash: null};
 
@@ -339,6 +347,55 @@ function viewTables() {
       i.tables.length ? h("div", {class: "tw"}, h("table", {}, h("thead", {}, h("tr", {}, ["Table", "Rows", "Columns", "Loaded", ""].map(x => h("th", {}, x)))), h("tbody", {}, i.tables.map(row)))) : h("p", {class: "note"}, "None yet."))];
 }
 
+const PILL = {Certain: "red", Likely: "amber", Possible: "grey", Covered: "green", Partly: "amber", "Not found": "red", "Not checkable": "grey"};
+const pill = t => h("span", {class: "pill " + (PILL[t] || "grey")}, t);
+
+async function viewAnalysis() {
+  const p = S.project;
+  let g;
+  try { g = await api("/api/analysis?name=" + encodeURIComponent(p)); } catch (e) { return [h("div", {class: "page"}, ...header("Analysis", "Nothing to analyse yet."), h("p", {class: "note"}, "Load code and documentation first."))]; }
+  const m = g.summary;
+  const stat = (big, small) => h("div", {class: "stat"}, h("b", {}, big), h("span", {}, small));
+  const stats = h("div", {class: "stats"},
+    stat(m.to_provide, `bots to provide (${m.certain} certain, ${m.likely} likely)`),
+    stat(m.possible, "possible, from table exports"),
+    stat(m.steps_total ? `${m.steps_covered} of ${m.steps_total}` : "-", `documented steps covered (${m.steps_partly} partly, ${m.steps_missing} not found)`),
+    stat(m.documented_bots ? `${m.documented_found} of ${m.documented_bots}` : "-", "documented bots found in the code"));
+  const botRows = g.bots.map(e => h("tr", {}, h("td", {}, h("b", {}, e.name), e.documented_as ? h("div", {class: "note"}, "documented as " + e.documented_as) : null),
+    h("td", {}, pill(e.confidence)), h("td", {}, h("ul", {}, e.reasons.map(r => h("li", {}, r)))), h("td", {}, e.where.join("; ") || "-")));
+  const filter = h("select", {style: "width:auto"}, ["All", "Not found", "Partly", "Covered", "Not checkable"].map(x => h("option", {value: x}, x === "All" ? "All steps" : x)));
+  const body = h("tbody", {});
+  const drawSteps = () => {
+    body.replaceChildren();
+    let last = "";
+    for (const s of g.steps) {
+      if (filter.value !== "All" && s.status !== filter.value) continue;
+      const where = `${s.doc}${s.page ? ", page " + s.page : ""}${s.scenario ? ", " + s.scenario : ""}`;
+      if (where !== last) { body.append(h("tr", {}, h("td", {colspan: 5, style: "background:var(--bg);font-weight:600"}, where))); last = where; }
+      body.append(h("tr", {}, h("td", {}, s.step), h("td", {}, s.text.length > 220 ? s.text.slice(0, 220) + "..." : s.text), h("td", {}, pill(s.status)),
+        h("td", {}, s.best ? [h("div", {}, s.best), h("div", {class: "note"}, "shared words: " + s.matched.join(", "))] : (s.matched.length ? h("div", {class: "note"}, "words found across several bots: " + s.matched.join(", ")) : "-")),
+        h("td", {}, s.missing_bot ? s.missing_bot : "-")));
+    }
+    if (!body.children.length) body.append(h("tr", {}, h("td", {colspan: 5}, "No steps match this filter.")));
+  };
+  filter.addEventListener("change", drawSteps); drawSteps();
+  return [h("div", {class: "page"}, ...header("Analysis", "What is still missing, worked out from the code, the documentation and the table exports. Every finding shows the evidence it rests on."),
+    ...g.notes.map(x => h("p", {class: "note", style: "color:var(--todo-fg);background:var(--todo-bg);padding:6px 10px;border-radius:6px"}, x)),
+    stats,
+    h("div", {class: "card"}, h("div", {class: "row", style: "justify-content:space-between"}, h("h2", {style: "margin:0"}, "Bots to provide"),
+        g.bots.length ? h("button", {class: "tiny", onclick: () => { location.href = `/download/${encodeURIComponent(p)}/analysis`; }}, "Download list (.csv)") : null),
+      g.bots.length ? h("div", {class: "tw"}, h("table", {}, h("thead", {}, h("tr", {}, ["Bot", "Confidence", "Why", "Where to find it"].map(x => h("th", {}, x)))), h("tbody", {}, botRows)))
+        : h("p", {class: "note"}, m.has_code ? "Nothing missing was found from the evidence loaded. More documentation or table exports give more to compare against." : "Load code first.")),
+    h("div", {class: "card"}, h("div", {class: "row", style: "justify-content:space-between"}, h("h2", {style: "margin:0"}, `Documented steps (${m.steps_total})`), filter),
+      m.steps_total ? h("div", {class: "tw"}, h("table", {}, h("thead", {}, h("tr", {}, ["Step", "Documented", "Status", "Closest code", "Missing bot"].map(x => h("th", {}, x)))), body))
+        : h("p", {class: "note"}, "No documented process steps to check. Load old SDDs under Documentation.")),
+    h("details", {class: "method"}, h("summary", {}, "How this is worked out"),
+      h("p", {}, "Certain: the code itself shows a gap, either a bot calls another bot that is not in the export, or the export manifest lists a bot whose file is missing."),
+      h("p", {}, "Likely: documentation lists a bot component and no bot in the code matches its name."),
+      h("p", {}, "Possible: an exported table that no SQL in the code touches, so the bot that fills or reads it may be missing."),
+      h("p", {}, "Steps are compared with the code by shared words: bot names, step labels, comments, variables, text constants and the packages used. Words nearly every bot uses count for little. This is a wording match, not proof: Covered means strong overlap, Partly means some, Not found means little or none. Check Partly and Not found against the code before asking anyone for a bot.")))];
+}
+
 async function viewSDD() {
   if (!S.sdd) { try { S.sdd = await api("/api/doc?name=" + encodeURIComponent(S.project)); } catch (e) { S.sdd = {html: "", menu: []}; } }
   const d = S.sdd;
@@ -363,7 +420,7 @@ function renderMenu() {
   const menu = $("menu"); menu.replaceChildren();
   $("nav").hidden = !S.project; $("navTitle").textContent = S.project || "Project";
   if (!S.project || !S.info) return;
-  const i = S.info, counts = {code: i.code.bots ? i.code.bots + " bots" : "", docs: i.documentation.length || "", videos: i.videos.length || "", graphs: i.graphs.length || "", tables: i.tables.length || ""};
+  const i = S.info, counts = {analysis: i.gaps && i.gaps.to_provide ? i.gaps.to_provide + " to provide" : "", code: i.code.bots ? i.code.bots + " bots" : "", docs: i.documentation.length || "", videos: i.videos.length || "", graphs: i.graphs.length || "", tables: i.tables.length || ""};
   for (const v of VIEWS) {
     const li = h("li", {}, h("a", {class: S.view === v.id ? "on" : "", onclick: () => go(v.id)}, h("span", {}, v.label), counts[v.id] ? h("span", {class: "count"}, counts[v.id]) : null));
     if (v.id === "sdd" && S.view === "sdd" && S.sdd && S.sdd.menu && S.sdd.menu.length) {
@@ -395,6 +452,7 @@ async function show() {
   if (!S.project) { view.append(h("div", {class: "empty"}, h("h2", {}, "No project selected"), h("p", {}, "Select a project on the left, or create a new one. Then choose SDD, Code, Documentation, Videos, Graphs or Tables."))); renderMenu(); return; }
   let content;
   if (S.view === "sdd") content = await viewSDD();
+  else if (S.view === "analysis") content = await viewAnalysis();
   else content = [h("div", {class: "page"}, {code: viewCode, docs: viewDocs, videos: viewVideos, graphs: viewGraphs, tables: viewTables}[S.view]())];
   view.append(...content);
   renderMenu(); if (S.view === "sdd") spy();
