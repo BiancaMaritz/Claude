@@ -1,6 +1,7 @@
 """Render document blocks to Markdown and Word (.docx)."""
 from __future__ import annotations
 
+import os
 import re
 
 BOLD = re.compile(r"\*\*(.+?)\*\*")
@@ -37,6 +38,8 @@ def to_markdown(blocks) -> str:
             out.append(f"{b[1]}\n")
         elif k == "src":
             out.append(f"*{b[1]}*\n")
+        elif k == "img":
+            out.append(f"![{b[2]}](media/{b[1]['file']})\n\n*{b[2]}*\n")
         elif k == "ul":
             out += [f"- {t}" for t in b[1]] + [""]
         elif k == "table":
@@ -137,6 +140,13 @@ def to_docx(blocks, path):
             r = doc.add_paragraph().add_run(b[1])
             r.italic = True
             r.font.color.rgb = RGBColor(0x1F, 0x5F, 0xBF)
+        elif k == "img":
+            if os.path.exists(b[1]["path"]):
+                doc.add_picture(b[1]["path"], width=Inches(6.2))
+            else:
+                _add_runs(doc.add_paragraph(), f"[Image file missing: {b[1]['file']}]")
+            cap = doc.add_paragraph().add_run(b[2])
+            cap.italic = True
         elif k == "ul":
             for t in b[1]:
                 _add_runs(doc.add_paragraph(style="List Bullet"), t)
@@ -177,6 +187,8 @@ def to_html(blocks):
 
     todo counts the placeholders still open in that section, so the menu shows what is left.
     """
+    import html as _html
+
     menu, out = [], []
     cur = {1: None, 2: None}
     n = 0
@@ -205,6 +217,9 @@ def to_html(blocks):
             for lvl in (1, 2):
                 if cur[lvl]:
                     cur[lvl]["docs"] = cur[lvl].get("docs", 0) + 1
+        elif k == "img":
+            out.append(f'<figure><img src="{_html.escape(b[1]["url"], quote=True)}" alt="{_html.escape(b[2], quote=True)}">'
+                       f"<figcaption>{_h(b[2])}</figcaption></figure>")
         elif k in ("p", "todo"):
             out.append(f"<p>{_h(b[1])}</p>")
             todo = len(PLACEHOLDER.findall(str(b[1])))

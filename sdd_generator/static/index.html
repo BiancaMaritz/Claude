@@ -10,15 +10,13 @@
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
 body{background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-.app{display:grid;grid-template-columns:350px 1fr;height:100vh}
+.app{display:grid;grid-template-columns:300px 1fr;height:100vh}
 aside{background:var(--panel);border-right:1px solid var(--line);overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
 main{overflow-y:auto;scroll-behavior:smooth}
 h1.brand{font-size:17px;margin:0}
 .sub{color:var(--mut);font-size:12px;margin:2px 0 0}
 .box{border:1px solid var(--line);border-radius:8px;padding:12px}
-.box>h2,details.box>summary{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:0 0 8px;font-weight:600}
-details.box>summary{cursor:pointer;list-style:revert}
-details.box>summary b{color:var(--fg)}
+.box>h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:0 0 8px;font-weight:600}
 label{display:block;font-size:12px;color:var(--mut);margin:8px 0 3px}
 select,textarea,input[type=text],input[type=file]{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit}
 textarea{resize:vertical}
@@ -28,31 +26,44 @@ button.primary{background:var(--acc);color:var(--acc-fg);border-color:var(--acc)
 button.danger{color:var(--err)}
 button.tiny{padding:1px 8px;font-size:12px}
 button:disabled{opacity:.5;cursor:default}
-.modes{display:grid;gap:6px;margin:4px 0}
-.modes label{display:flex;gap:8px;align-items:flex-start;color:var(--fg);font-size:13px;margin:0;padding:6px 8px;border:1px solid var(--line);border-radius:6px;cursor:pointer}
-.modes small{display:block;color:var(--mut)}
-.modes input:checked+span{font-weight:600}
 .msg{margin-top:8px;font-size:13px}.ok{color:var(--ok)}.err{color:var(--err)}
 .detail{font-size:12px;color:var(--mut)}.detail div{overflow-wrap:anywhere}
 .note{font-size:12px;color:var(--mut);margin:6px 0 0}
 .files{margin:8px 0 0;padding:0;list-style:none;font-size:12px}
 .files li{display:flex;justify-content:space-between;gap:8px;align-items:flex-start;padding:4px 0;border-top:1px solid var(--line)}
 .files span{overflow-wrap:anywhere}.files small{color:var(--mut);display:block}
-nav ul{list-style:none;margin:0;padding:0}
-nav .g{margin-top:10px;font-weight:600;font-size:13px}
-nav a{display:flex;justify-content:space-between;gap:8px;padding:4px 8px;border-radius:6px;color:var(--fg);text-decoration:none;cursor:pointer}
-nav a:hover{background:var(--sel)}nav a.on{background:var(--sel);font-weight:600}
-nav .l2 a{padding-left:20px;font-size:13px}
-nav .tags{display:flex;gap:4px;align-self:flex-start;flex-wrap:wrap;justify-content:flex-end}
+
+/* left menu */
+#menu{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+#menu>li>a{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;border-radius:6px;color:var(--fg);text-decoration:none;cursor:pointer;font-weight:600}
+#menu>li>a:hover{background:var(--sel)}#menu>li>a.on{background:var(--sel);color:var(--acc)}
+#menu .count{font-weight:400;font-size:11px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:0 7px;color:var(--mut)}
+#menu ul{list-style:none;margin:2px 0 6px;padding:0 0 0 8px}
+#menu ul a{display:flex;justify-content:space-between;gap:8px;padding:3px 8px;border-radius:6px;color:var(--fg);text-decoration:none;cursor:pointer;font-size:13px;font-weight:400}
+#menu ul a:hover{background:var(--sel)}#menu ul a.on{background:var(--sel);font-weight:600}
+#menu ul .g>a{font-weight:600;margin-top:6px}
+#menu .tags{display:flex;gap:4px;align-self:flex-start;flex-wrap:wrap;justify-content:flex-end}
 .badge{background:var(--todo-bg);color:var(--todo-fg);border-radius:10px;padding:0 7px;font-size:11px;white-space:nowrap;font-weight:400}
 .badge.doc{background:var(--doc-bg);color:var(--doc-fg)}
+
+/* right side */
 .bar{position:sticky;top:0;z-index:2;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 24px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 .bar .t{font-weight:600;font-size:15px;flex:1;min-width:160px}
 .bar .s{color:var(--mut);font-size:12px}
+.page{max-width:980px;margin:0 auto;padding:20px 24px 60px}
+.page h1{font-size:22px;margin:0 0 4px}
+.page .lead{color:var(--mut);margin:0 0 16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px;margin:0 0 16px}
+.card>h2{font-size:15px;margin:0 0 8px}
+.modes{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:6px 0}
+.modes label{display:flex;gap:8px;align-items:flex-start;color:var(--fg);font-size:13px;margin:0;padding:8px 10px;border:1px solid var(--line);border-radius:6px;cursor:pointer}
+.modes small{display:block;color:var(--mut)}
+.modes input:checked+span{font-weight:600}
 .paper{max-width:980px;margin:20px auto 60px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:36px 44px}
 .paper h1.doc-title{font-size:26px;margin:0 0 6px}
 .paper h2{font-size:21px;margin:34px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--line);scroll-margin-top:60px}
 .paper h3{font-size:16px;margin:22px 0 6px;scroll-margin-top:60px}.paper h4{font-size:14px;margin:16px 0 4px;scroll-margin-top:60px}
+.paper figure{margin:12px 0}.paper figure img{max-width:100%;border:1px solid var(--line);border-radius:4px}.paper figcaption{font-size:12px;color:var(--mut)}
 .tw{overflow-x:auto;margin:8px 0}
 table{border-collapse:collapse;width:100%;font-size:13px}
 th,td{border:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}
@@ -60,8 +71,13 @@ th{background:var(--bg)}
 .todo{background:var(--todo-bg);color:var(--todo-fg);padding:0 3px;border-radius:3px}
 .src{display:inline-block;margin:10px 0 2px;padding:1px 8px;border-radius:10px;background:var(--doc-bg);color:var(--doc-fg);font-size:12px;font-style:italic}
 .empty{max-width:560px;margin:90px auto;text-align:center;color:var(--mut)}
-main details{max-width:980px;margin:0 auto 40px;padding:0 4px;color:var(--mut);font-size:13px}
-@media (max-width:820px){.app{grid-template-columns:1fr;height:auto}aside{border-right:0;border-bottom:1px solid var(--line)}main{overflow:visible}.paper{padding:18px;margin:12px}.bar{padding:10px 16px}}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.item{border:1px solid var(--line);border-radius:8px;padding:10px;background:var(--panel)}
+.item video,.item img{width:100%;border-radius:4px;background:#000;display:block;max-height:220px;object-fit:contain}
+.item h3{font-size:13px;margin:8px 0 2px;overflow-wrap:anywhere}
+.item .row{margin-top:6px;flex-wrap:wrap}
+details.hist{max-width:980px;margin:0 auto 40px;padding:0 4px;color:var(--mut);font-size:13px}
+@media (max-width:860px){.app{grid-template-columns:1fr;height:auto}aside{border-right:0;border-bottom:1px solid var(--line)}main{overflow:visible}.paper{padding:18px;margin:12px}.bar{padding:10px 16px}.modes{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -70,78 +86,44 @@ main details{max-width:980px;margin:0 auto 40px;padding:0 4px;color:var(--mut);f
   <div><h1 class="brand">SDD Generator</h1><p class="sub">Automation Anywhere export to Solution Design Document</p><p class="sub">Version @@VERSION@@</p></div>
 
   <div class="box">
-    <h2>Document</h2>
-    <div class="row"><select id="docSel" aria-label="Document"></select><button id="newBtn" title="Create a new document">New</button></div>
-    <div id="newRow" class="row" hidden style="margin-top:8px"><input id="newName" type="text" placeholder="Document name" maxlength="60"><button id="newOk">OK</button></div>
+    <h2>Select Project</h2>
+    <div class="row"><select id="projSel" aria-label="Project"></select><button id="newBtn" title="Create a new project">New</button></div>
+    <div id="newRow" class="row" hidden style="margin-top:8px"><input id="newName" type="text" placeholder="Project name" maxlength="60"><button id="newOk">OK</button></div>
     <p class="note" id="dataDir"></p>
     <div id="recover" hidden>
-      <p class="note"><b>Stored documents were found in other folders.</b> They are not in the folder this app uses now.</p>
+      <p class="note"><b>Stored projects were found in other folders.</b> They are not in the folder this app uses now.</p>
       <ul class="files" id="recoverList"></ul>
     </div>
-    <details class="note"><summary>Recover documents from a folder</summary>
+    <details class="note"><summary>Recover projects from a folder</summary>
       <input id="rpath" type="text" placeholder="C:\Dev\sdd-generator\sdd-generator\data\documents">
       <div class="row" style="margin-top:6px"><button id="rbtn" class="tiny">Recover</button></div>
       <div class="msg" id="rmsg" role="status"></div>
     </details>
   </div>
 
-  <details class="box" id="codeBox" open>
-    <summary><b>Current Code</b></summary>
-    <p class="note" style="margin-top:0">What is built. The code always has the highest priority in the SDD.</p>
-    <div class="modes" role="radiogroup" aria-label="Code load mode">
-      <label><input type="radio" name="cmode" value="add" checked><span>Add to current code<small>Merge bots into what is stored. Same bot path: the new one replaces it.</small></span></label>
-      <label><input type="radio" name="cmode" value="overwrite"><span>Overwrite current code<small>Start the code again from these files only. Documentation is kept.</small></span></label>
-    </div>
-    <label for="cfiles">Export .zip file(s) (any size)</label>
-    <input id="cfiles" type="file" multiple accept=".zip">
-    <label for="cpaths">Or a path on this computer (.zip or export folder). Fastest for large exports.</label>
-    <textarea id="cpaths" rows="2" placeholder="C:\Exports\Lucy.zip"></textarea>
-    <label for="title">Title (optional)</label>
-    <input id="title" type="text" placeholder="Document title" maxlength="120">
-    <div class="row" style="margin-top:10px"><button id="cload" class="primary">Load code</button></div>
-    <div class="msg" id="cmsg" role="status"></div><div class="detail" id="cdetail"></div>
-    <ul class="files" id="csources"></ul>
-  </details>
-
-  <details class="box" id="docBox">
-    <summary><b>Documentation</b></summary>
-    <p class="note" style="margin-top:0">Older SDDs or other documents describing the process. They only fill what is still <span class="todo">[TO BE COMPLETED]</span> or missing, and every passage is marked with its source.</p>
-    <div class="modes" role="radiogroup" aria-label="Documentation load mode">
-      <label><input type="radio" name="dmode" value="add" checked><span>Add documentation<small>Keep what is stored. The same file again changes nothing.</small></span></label>
-      <label><input type="radio" name="dmode" value="overwrite"><span>Overwrite documentation<small>Replace all stored documentation and intake.</small></span></label>
-    </div>
-    <label for="dfiles">.pdf, .docx or .md SDD(s), or an intake .json</label>
-    <input id="dfiles" type="file" multiple accept=".pdf,.docx,.md,.txt,.json">
-    <label for="dpaths">Or a path to a file or a folder of documents</label>
-    <textarea id="dpaths" rows="2" placeholder="C:\Dev\Documents\Lucy"></textarea>
-    <div class="row" style="margin-top:10px"><button id="dload" class="primary">Load documentation</button></div>
-    <div class="msg" id="dmsg" role="status"></div><div class="detail" id="ddetail"></div>
-    <ul class="files" id="dlist"></ul>
-    <p class="note">Text and tables are read. Screenshots and diagrams are not imported.</p>
-  </details>
-
-  <nav aria-label="Sections"><div class="box"><h2>Sections</h2><ul id="menu"></ul></div></nav>
+  <nav aria-label="Project" id="nav" hidden><div class="box"><h2 id="navTitle">Project</h2><ul id="menu"></ul></div></nav>
 </aside>
 
-<main id="main">
-  <div class="bar" id="bar" hidden>
-    <span class="t" id="docTitle"></span><span class="s" id="docStat"></span>
-    <button id="dlDocx" class="primary">Word (.docx)</button><button id="dlMd">Markdown (.md)</button><button id="delBtn" class="danger">Delete</button>
-  </div>
-  <div id="view"><div class="empty"><h2>No document yet</h2><p>Create a document, then load the current code. Documentation can be added at any time to fill the gaps. The expected SDD appears here.</p></div></div>
-</main>
+<main id="main"><div id="view"></div></main>
 </div>
 
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
-let current = null;
-
-function say(el, text, cls) { $(el).textContent = text; $(el).className = "msg " + (cls || ""); }
-function remember(v) { try { localStorage.setItem("sdd.doc", v); } catch (e) {} }
-function recall() { try { return localStorage.getItem("sdd.doc"); } catch (e) { return null; } }
 const fmt = t => (t || "").replace("T", " ");
-
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+};
+function h(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (v === true) e.setAttribute(k, ""); else if (v !== false && v != null) e.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null && k !== false) e.append(k.nodeType ? k : document.createTextNode(String(k)));
+  return e;
+}
 async function api(url, opts) {
   const r = await fetch(url, opts);
   const j = await r.json();
@@ -150,126 +132,256 @@ async function api(url, opts) {
 }
 const post = (url, obj) => api(url, {method: "POST", body: JSON.stringify(obj), headers: {"Content-Type": "application/json"}});
 
-function stage(file, label, msgEl) {
+const VIEWS = [
+  {id: "sdd", label: "SDD"}, {id: "code", label: "Code"}, {id: "docs", label: "Documentation"},
+  {id: "videos", label: "Videos"}, {id: "graphs", label: "Graphs"}, {id: "tables", label: "Tables"}];
+const S = {project: null, view: "sdd", info: null, sdd: null, flash: null};
+
+// ------------------------------------------------------------- uploads ---
+function stage(file, label, setMsg) {
   // Streams the file to the local server in chunks; works for multi-gigabyte files.
   return new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();
     x.open("POST", "/api/stage?name=" + encodeURIComponent(file.name));
-    x.upload.onprogress = e => { if (e.lengthComputable) say(msgEl, `${label}: uploading ${file.name} ${Math.round(100 * e.loaded / e.total)}% of ${(file.size / 1048576).toFixed(0)} MB`); };
+    x.upload.onprogress = e => { if (e.lengthComputable) setMsg(`${label}: uploading ${file.name} ${Math.round(100 * e.loaded / e.total)}% of ${(file.size / 1048576).toFixed(0)} MB`); };
     x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch (e) {} x.status === 200 ? resolve(j) : reject(new Error(j.error || "Upload failed (" + x.status + ")")); };
     x.onerror = () => reject(new Error("The upload failed. Check that run.bat is still running. If the file is in OneDrive, make sure it is stored on this device (right-click, Always keep on this device), or paste its path instead."));
     x.send(file);
   });
 }
 
-async function refreshDocs(select) {
-  const docs = await api("/api/docs");
-  const sel = $("docSel");
+const n = v => Array.isArray(v) ? v.length : v;
+const base = x => x.split("/").pop();
+const list = (a, max = 12) => a.length > max ? a.slice(0, max).join(", ") + ` and ${a.length - max} more` : a.join(", ");
+const flash = (text, lines) => { S.flash = {view: S.view, text, lines: lines || []}; };
+async function refreshProjects() {
+  // keep the picker's counts current, and a project that has now been saved stops saying "new"
+  const docs = await api("/api/docs"), sel = $("projSel");
   sel.replaceChildren();
-  for (const d of docs) {
-    const o = document.createElement("option");
-    o.value = d.name; o.textContent = `${d.name} (${d.bots} bots)`;
-    sel.appendChild(o);
+  for (const d of docs) sel.append(h("option", {value: d.name}, `${d.name} (${d.bots} bots)`));
+  if (S.project && !docs.some(d => d.name === S.project)) sel.append(h("option", {value: S.project}, S.project + " (new)"));
+  if (S.project) sel.value = S.project;
+}
+async function reload() { S.sdd = null; await loadInfo(); await refreshProjects(); await show(); }
+
+// A reusable "load files" form. send(staged, paths, mode) posts the request; onDone(res) returns
+// {text, lines}, shown after the view refreshes.
+function loadForm({accept, allowed, pathHint, modes, send, button, onDone, extra}) {
+  const msg = h("div", {class: "msg", role: "status"}), detail = h("div", {class: "detail"});
+  const files = h("input", {type: "file", multiple: true, accept}), paths = h("textarea", {rows: 2, placeholder: pathHint});
+  const group = "m" + Math.random().toString(36).slice(2);
+  const radios = modes ? h("div", {class: "modes", role: "radiogroup"}, modes.map((m, i) =>
+    h("label", {}, h("input", {type: "radio", name: group, value: m.value, checked: i === 0}), h("span", {}, m.title, h("small", {}, m.help))))) : null;
+  const btn = h("button", {class: "primary"}, button);
+  const say = (t, c) => { msg.textContent = t; msg.className = "msg " + (c || ""); };
+  if (S.flash && S.flash.view === S.view) {
+    say(S.flash.text, "ok"); for (const l of S.flash.lines) detail.append(h("div", {}, l)); S.flash = null;
   }
-  const want = select || recall();
-  if (docs.some(d => d.name === want)) sel.value = want;
-  current = docs.length ? sel.value : current;
-  await showDoc();
-  checkRecover();
+  btn.addEventListener("click", async () => {
+    const chosen = [...files.files], p = paths.value.trim();
+    if (!chosen.length && !p) { say("Choose a file or enter a path.", "err"); return; }
+    const bad = chosen.find(f => !allowed.test(f.name));
+    if (bad) { say(bad.name + ": not a supported file type here.", "err"); return; }
+    const mode = radios ? radios.querySelector("input:checked").value : "add";
+    if (mode === "overwrite" && !confirm("Replace everything stored here with these files?")) return;
+    btn.disabled = true; say("Loading..."); detail.replaceChildren();
+    try {
+      const staged = [];
+      for (const [i, f] of chosen.entries()) staged.push((await stage(f, `File ${i + 1} of ${chosen.length}`, say)).token);
+      say("Reading...");
+      const out = onDone(await send(staged, p, mode));
+      flash(out.text, out.lines);
+      await reload();
+    } catch (e) { say(e.message === "Failed to fetch" ? "Cannot reach the app. Check that run.bat is still running." : e.message, "err"); btn.disabled = false; }
+  });
+  return h("div", {}, radios, h("label", {}, "Files"), files,
+    h("label", {}, "Or a path on this computer. Fastest for large files."), paths,
+    extra, h("div", {class: "row", style: "margin-top:10px"}, btn), msg, detail);
+}
+const changed = obj => Object.entries(obj).filter(([, v]) => v && v.length).map(([k, v]) => `${k}: ${list(v.map(base))}`);
+
+function sectionSelect(info, value, onChange) {
+  const s = h("select", {}, info.sections.map(x => h("option", {value: x.key, selected: x.key === value}, x.label)));
+  s.addEventListener("change", () => onChange(s.value));
+  return s;
+}
+const header = (title, lead) => [h("h1", {}, title), h("p", {class: "lead"}, lead)];
+
+// ---------------------------------------------------------------- views ---
+function viewCode() {
+  const i = S.info, p = S.project, c = i.code;
+  const title = h("input", {type: "text", placeholder: "Project title (optional)", maxlength: 120});
+  const form = loadForm({
+    accept: ".zip", allowed: /\.zip$/i, pathHint: "C:\\Exports\\Lucy.zip (a .zip or an extracted export folder)", button: "Load code",
+    modes: [{value: "add", title: "Update: only what changed", help: "Bots in the files replace the same bots stored; everything else stays. Use this when one part of the code changed."},
+            {value: "overwrite", title: "Replace everything", help: "Fresh reload: the stored code becomes exactly these files. Documentation, videos, graphs and tables are kept."}],
+    send: (staged, paths, mode) => post("/api/load", {doc: p, mode, paths, staged, title: title.value.trim()}),
+    onDone: res => {
+      const r = res.report;
+      return {text: r.noop ? "No changes: this code is already stored." : `${r.mode === "add" ? "Updated" : "Replaced"}: ${r.added} added, ${r.updated} updated, ${r.unchanged} unchanged, ${r.removed} removed.`,
+        lines: [...changed(r.names || {}), ...(r.already_loaded && r.already_loaded.length ? ["already loaded before: " + r.already_loaded.join(", ")] : [])]};
+    },
+    extra: h("div", {}, h("label", {}, "Project title (optional)"), title)});
+  return [...header("Code", "What is built. The code has the highest priority: documentation, videos, graphs and tables only fill gaps."),
+    h("div", {class: "card"}, h("h2", {}, "Load code"), form),
+    h("div", {class: "card"}, h("h2", {}, `Current code: ${c.bots} bots`),
+      c.sources.length ? h("ul", {class: "files"}, c.sources.map(s => h("li", {}, h("span", {}, s.name, h("small", {}, s.at ? "loaded " + fmt(s.at) : ""))))) : h("p", {class: "note"}, "No code loaded yet."),
+      c.folders.length ? h("div", {class: "tw"}, h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Folder"), h("th", {}, "Bots"))),
+        h("tbody", {}, c.folders.map(f => h("tr", {}, h("td", {}, f.folder), h("td", {}, f.bots)))))) : null)];
 }
 
-async function recover(folder) {
-  const j = await post("/api/recover", {folder});
-  const n = Object.entries(j.imported).map(([a, b]) => a === b ? a : `${a} as ${b}`);
-  return n;
+function viewDocs() {
+  const i = S.info, p = S.project;
+  const form = loadForm({
+    accept: ".pdf,.docx,.md,.txt,.json", allowed: /\.(pdf|docx|md|txt|json)$/i, pathHint: "C:\\Dev\\Documents\\Lucy (a file or a folder of documents)", button: "Load documentation",
+    modes: [{value: "add", title: "Add documentation", help: "Keep what is stored. The same file again changes nothing; a file with the same name replaces the older copy."},
+            {value: "overwrite", title: "Replace all documentation", help: "Stored documentation and intake become exactly these files. Code is never touched."}],
+    send: (staged, paths, mode) => post("/api/documentation/load", {doc: p, mode, paths, staged}),
+    onDone: res => {
+      const r = res.report;
+      return {text: r.noop ? "No changes: this content is already stored." : `${r.mode === "add" ? "Added" : "Replaced"}: ${n(r.added)} added, ${n(r.updated)} updated, ${n(r.unchanged)} unchanged, ${n(r.removed)} removed.`,
+        lines: changed({added: r.added, updated: r.updated, removed: r.removed})};
+    }});
+  return [...header("Documentation", "Old SDDs or other documents about the process (.pdf, .docx, .md; an intake .json too). The code always wins: documentation only fills what would otherwise be to do, and every passage is marked with its source."),
+    h("div", {class: "card"}, h("h2", {}, "Load documentation"), form, h("p", {class: "note"}, "Text and tables are read. Screenshots and diagrams are not imported; add those under Graphs.")),
+    h("div", {class: "card"}, h("h2", {}, `Stored documentation: ${i.documentation.length}`),
+      i.documentation.length ? h("ul", {class: "files"}, i.documentation.map(f => h("li", {},
+        h("span", {}, f.name, h("small", {}, `${f.pages ? f.pages + " pages, " : ""}${f.sections.length} sections: ${f.sections.join(", ")}`)),
+        h("button", {class: "tiny danger", onclick: async () => { if (confirm(`Remove "${f.name}"?`)) { await post("/api/documentation/remove", {doc: p, fp: f.fp}); reload(); } }}, "Remove")))) : h("p", {class: "note"}, "None yet."))];
 }
 
-async function checkRecover() {
-  let found = [];
-  try { found = await api("/api/recover"); } catch (e) { return; }
-  $("recover").hidden = !found.length;
-  const ul = $("recoverList"); ul.replaceChildren();
-  for (const f of found) {
-    const b = document.createElement("button"); b.className = "tiny"; b.textContent = "Import";
-    b.addEventListener("click", async () => {
-      try { const n = await recover(f.folder); say("rmsg", n.length ? "Recovered: " + n.join(", ") : "Nothing to import.", "ok"); await refreshDocs(); }
-      catch (e) { say("rmsg", e.message, "err"); }
+function viewVideos() {
+  const i = S.info, p = S.project;
+  let section = "appendix";
+  const form = loadForm({
+    accept: ".mp4,.m4v,.mov,.mkv,.webm,.avi", allowed: /\.(mp4|m4v|mov|mkv|webm|avi)$/i, pathHint: "C:\\Videos\\Walkthrough.mp4 (stays where it is; nothing is copied)", button: "Add videos",
+    send: (staged, paths) => post("/api/video/add", {doc: p, staged, paths, section}),
+    onDone: res => ({text: `Added: ${res.added.join(", ")}`}),
+    extra: h("div", {}, h("label", {}, "Place the transcript in this SDD section"), sectionSelect(i, section, v => { section = v; }))});
+  const card = v => {
+    const tf = h("input", {type: "file", accept: ".srt,.vtt,.txt,.md,.docx", style: "display:none"});
+    tf.addEventListener("change", async () => {
+      if (!tf.files.length) return;
+      try { const t = await stage(tf.files[0], "Transcript", () => {}); await post("/api/video/transcript", {doc: p, id: v.id, staged: [t.token]}); flash(`Transcript attached to ${v.name}.`); reload(); }
+      catch (e) { alert(e.message); }
     });
-    li(ul, f.folder, f.documents.join(", "), b);
+    return h("div", {class: "item"},
+      v.has_file ? h("video", {controls: true, preload: "metadata", src: v.url}) : h("p", {class: "err"}, "The file is no longer at its stored location."),
+      h("h3", {}, v.name), h("div", {class: "note"}, `${(v.size / 1048576).toFixed(1)} MB, ${v.kind === "path" ? "linked, not copied" : "stored by the app"}`),
+      h("label", {}, "SDD section"), sectionSelect(i, v.section, async s => { await post("/api/item/update", {doc: p, kind: "videos", id: v.id, section: s}); }),
+      h("div", {class: "note"}, v.transcript ? `Transcript: ${v.transcript.name} (${v.transcript.chars.toLocaleString()} characters)` : "No transcript: this video adds nothing to the SDD yet."),
+      h("div", {class: "row"}, tf, h("button", {class: "tiny", onclick: () => tf.click()}, v.transcript ? "Replace transcript" : "Attach transcript"),
+        v.transcript ? h("button", {class: "tiny", onclick: async () => { await post("/api/item/update", {doc: p, kind: "videos", id: v.id, transcript: null}); reload(); }}, "Remove transcript") : null,
+        h("button", {class: "tiny danger", onclick: async () => { if (confirm(`Remove "${v.name}" from this project?`)) { await post("/api/item/remove", {doc: p, kind: "videos", id: v.id}); reload(); } }}, "Remove video")));
+  };
+  return [...header("Videos", "Old walkthroughs and recordings. Attach a transcript (.srt, .vtt, .txt, .md or .docx) and its text is placed in the SDD section you choose, marked as not verified against the code."),
+    h("div", {class: "card"}, h("h2", {}, "Add videos"), form, h("p", {class: "note"}, "The app plays the video but does not read its audio. A transcript is what adds content.")),
+    h("div", {class: "card"}, h("h2", {}, `Videos: ${i.videos.length}`), i.videos.length ? h("div", {class: "grid"}, i.videos.map(card)) : h("p", {class: "note"}, "None yet."))];
+}
+
+function viewGraphs() {
+  const i = S.info, p = S.project;
+  let section = "appendix";
+  const caption = h("input", {type: "text", placeholder: "Caption (optional)", maxlength: 200});
+  const form = loadForm({
+    accept: ".png,.jpg,.jpeg,.gif,.bmp", allowed: /\.(png|jpg|jpeg|gif|bmp)$/i, pathHint: "C:\\Diagrams\\ERD.png", button: "Add graphs",
+    send: (staged, paths) => post("/api/graph/add", {doc: p, staged, paths, section, caption: caption.value.trim()}),
+    onDone: res => ({text: `Added: ${res.added.join(", ")}`}),
+    extra: h("div", {}, h("label", {}, "Place the graph in this SDD section"), sectionSelect(i, section, v => { section = v; }), h("label", {}, "Caption"), caption)});
+  const card = g => {
+    const cap = h("input", {type: "text", value: g.caption || "", placeholder: "Caption", maxlength: 200});
+    cap.addEventListener("change", async () => { await post("/api/item/update", {doc: p, kind: "graphs", id: g.id, caption: cap.value}); });
+    return h("div", {class: "item"}, h("img", {src: g.url, alt: g.caption || g.name}), h("h3", {}, g.name), cap,
+      h("label", {}, "SDD section"), sectionSelect(i, g.section, async s => { await post("/api/item/update", {doc: p, kind: "graphs", id: g.id, section: s}); }),
+      h("div", {class: "row"}, h("button", {class: "tiny danger", onclick: async () => { if (confirm(`Remove "${g.name}"?`)) { await post("/api/item/remove", {doc: p, kind: "graphs", id: g.id}); reload(); } }}, "Remove")));
+  };
+  return [...header("Graphs", "Diagrams and screenshots, current or old: ERDs, process flows, architecture. They are placed in the SDD section you choose, marked as not verified against the code. PNG, JPG, GIF or BMP."),
+    h("div", {class: "card"}, h("h2", {}, "Add graphs"), form),
+    h("div", {class: "card"}, h("h2", {}, `Graphs: ${i.graphs.length}`), i.graphs.length ? h("div", {class: "grid"}, i.graphs.map(card)) : h("p", {class: "note"}, "None yet."))];
+}
+
+function tableReport(r) {
+  const lines = [];
+  for (const [t, d] of Object.entries(r.changes || {})) {
+    const bits = [d.added.length ? "columns added: " + d.added.join(", ") : "", d.removed.length ? "columns removed: " + d.removed.join(", ") : "",
+      d.retyped.length ? "retyped: " + d.retyped.join(", ") : "", `rows ${d.rows[0].toLocaleString()} to ${d.rows[1].toLocaleString()}`].filter(Boolean);
+    lines.push(`${t}: ${bits.join("; ")}`);
   }
+  if (r.removed.length) lines.push("removed: " + r.removed.join(", "));
+  return {text: r.noop ? "No changes: these tables are already stored." : `${r.mode === "add" ? "Updated" : "Replaced all"}: ${r.added.length} added, ${r.replaced.length} replaced, ${r.unchanged.length} unchanged, ${r.removed.length} removed.`, lines};
 }
 
-$("rbtn").addEventListener("click", async () => {
-  const f = $("rpath").value.trim();
-  if (!f) { say("rmsg", "Enter a folder path.", "err"); return; }
-  try { const n = await recover(f); say("rmsg", "Recovered: " + n.join(", "), "ok"); $("rpath").value = ""; await refreshDocs(); }
-  catch (e) { say("rmsg", e.message, "err"); }
-});
-
-function li(parent, text, sub, btn) {
-  const l = document.createElement("li");
-  const s = document.createElement("span"); s.textContent = text;
-  if (sub) { const m = document.createElement("small"); m.textContent = sub; s.appendChild(m); }
-  l.appendChild(s); if (btn) l.appendChild(btn);
-  parent.appendChild(l);
-}
-
-async function showDoc() {
-  const view = $("view"), menu = $("menu");
-  menu.replaceChildren(); $("csources").replaceChildren(); $("dlist").replaceChildren();
-  if (!current) { $("bar").hidden = true; return; }
-  remember(current);
-  let d;
-  try { d = await api("/api/doc?name=" + encodeURIComponent(current)); }
-  catch (e) { $("bar").hidden = true; return; }  // a new document that has nothing loaded yet
-  $("dataDir").textContent = "Stored in " + d.data_dir;
-  $("bar").hidden = false;
-  $("docTitle").textContent = d.title;
-  $("docStat").textContent = `${d.bots} bots, ${d.documentation.length} documentation file(s), updated ${fmt(d.updated)}`;
-  for (const s of d.sources) li($("csources"), s.name, s.at ? "loaded " + fmt(s.at) : "");
-  for (const f of d.documentation) {
-    const b = document.createElement("button"); b.className = "tiny danger"; b.textContent = "Remove";
-    b.addEventListener("click", async () => {
-      if (!confirm(`Remove "${f.name}" from the documentation of "${current}"?`)) return;
-      await post("/api/documentation/remove", {doc: current, fp: f.fp}); await showDoc();
+function viewTables() {
+  const i = S.info, p = S.project;
+  const form = loadForm({
+    accept: ".csv,.tsv,.xlsx", allowed: /\.(csv|tsv|xlsx)$/i, pathHint: "C:\\Exports\\Tables (a file or a folder of CSV/Excel files)", button: "Load tables",
+    modes: [{value: "add", title: "Update: add new, replace changed", help: "A table with a new name is added. A table whose name already exists is replaced, and what changed is shown."},
+            {value: "overwrite", title: "Replace all tables", help: "The stored tables become exactly these files."}],
+    send: (staged, paths, mode) => post("/api/tables/load", {doc: p, mode, paths, staged}),
+    onDone: res => tableReport(res.report)});
+  const row = t => {
+    const cols = h("div", {class: "note", hidden: true}, t.columns.map(c => h("div", {}, `${c.name}: ${c.type}, ${c.nonnull.toLocaleString()} filled`)));
+    const rep = h("input", {type: "file", accept: ".csv,.tsv,.xlsx", style: "display:none"});
+    rep.addEventListener("change", async () => {
+      if (!rep.files.length) return;
+      try { const tk = await stage(rep.files[0], "Table", () => {}); const r = await post("/api/tables/load", {doc: p, mode: "add", staged: [tk.token]}); const o = tableReport(r.report); flash(o.text, o.lines); reload(); }
+      catch (e) { alert(e.message); }
     });
-    li($("dlist"), f.name, `${f.pages ? f.pages + " pages, " : ""}${f.sections.length} sections`, b);
+    const toggle = h("button", {class: "tiny", onclick: () => { cols.hidden = !cols.hidden; toggle.textContent = cols.hidden ? "show" : "hide"; }}, "show");
+    return h("tr", {}, h("td", {}, h("b", {}, t.name), h("div", {class: "note"}, t.source), cols),
+      h("td", {}, t.rows.toLocaleString()), h("td", {}, t.columns.length, " ", toggle), h("td", {}, fmt(t.loaded_at)),
+      h("td", {}, rep, h("button", {class: "tiny", title: "Load a newer export of this table", onclick: () => rep.click()}, "Replace"), " ",
+        h("button", {class: "tiny danger", onclick: async () => { if (confirm(`Remove table "${t.name}"?`)) { await post("/api/tables/remove", {doc: p, table: t.name}); reload(); } }}, "Remove")));
+  };
+  return [...header("Tables", "Exports of current tables (CSV, TSV or Excel). Only names, column types and row counts are kept, never the values. They fill the ERD section and are checked against the columns the code writes."),
+    h("div", {class: "card"}, h("h2", {}, "Load tables"), form, h("p", {class: "note"}, "An Excel workbook gives one table per sheet. A CSV is named after its file. A newer export of a table with the same name replaces the stored one.")),
+    h("div", {class: "card"}, h("h2", {}, `Tables: ${i.tables.length}`),
+      i.tables.length ? h("div", {class: "tw"}, h("table", {}, h("thead", {}, h("tr", {}, ["Table", "Rows", "Columns", "Loaded", ""].map(x => h("th", {}, x)))), h("tbody", {}, i.tables.map(row)))) : h("p", {class: "note"}, "None yet."))];
+}
+
+async function viewSDD() {
+  if (!S.sdd) { try { S.sdd = await api("/api/doc?name=" + encodeURIComponent(S.project)); } catch (e) { S.sdd = {html: "", menu: []}; } }
+  const d = S.sdd;
+  if (!d.html) return [h("div", {class: "empty"}, h("h2", {}, "Nothing to show yet"), h("p", {}, "Load the current code under Code. Documentation, videos, graphs and tables can fill the gaps."))];
+  const bar = h("div", {class: "bar"}, h("span", {class: "t"}, d.title), h("span", {class: "s"}, `${d.bots} bots, ${d.documentation.length} documentation file(s), updated ${fmt(d.updated)}`),
+    h("button", {class: "primary", onclick: () => { location.href = `/download/${encodeURIComponent(S.project)}/docx`; }}, "Word (.docx)"),
+    h("button", {onclick: () => { location.href = `/download/${encodeURIComponent(S.project)}/md`; }}, "Markdown (.md)"),
+    h("button", {class: "danger", onclick: async () => { if (!confirm(`Delete project "${S.project}" permanently? A backup copy is kept in the data folder.`)) return; await post("/api/delete", {name: S.project}); S.project = null; boot(); }}, "Delete project"));
+  const paper = h("article", {class: "paper"}); paper.innerHTML = d.html;  // server-escaped
+  const hist = h("details", {class: "hist"}, h("summary", {}, "Load history"), (S.info.history || []).map(x =>
+    h("div", {}, `${fmt(x.at)}  ${x.kind || "code"} (${x.mode}): ${(x.files || []).join(", ")}  (+${n(x.added)} added, ${n(x.updated)} updated, ${n(x.unchanged)} unchanged, ${n(x.removed)} removed)`)));
+  return [bar, paper, hist];
+}
+
+// ----------------------------------------------------------- navigation ---
+async function loadInfo() {
+  S.info = await api("/api/project?name=" + encodeURIComponent(S.project));
+  $("dataDir").textContent = S.info.data_dir ? "Stored in " + S.info.data_dir : "";
+}
+
+function renderMenu() {
+  const menu = $("menu"); menu.replaceChildren();
+  $("nav").hidden = !S.project; $("navTitle").textContent = S.project || "Project";
+  if (!S.project || !S.info) return;
+  const i = S.info, counts = {code: i.code.bots ? i.code.bots + " bots" : "", docs: i.documentation.length || "", videos: i.videos.length || "", graphs: i.graphs.length || "", tables: i.tables.length || ""};
+  for (const v of VIEWS) {
+    const li = h("li", {}, h("a", {class: S.view === v.id ? "on" : "", onclick: () => go(v.id)}, h("span", {}, v.label), counts[v.id] ? h("span", {class: "count"}, counts[v.id]) : null));
+    if (v.id === "sdd" && S.view === "sdd" && S.sdd && S.sdd.menu && S.sdd.menu.length) {
+      const ul = h("ul", {});
+      for (const m of S.sdd.menu) {
+        const tags = h("span", {class: "tags"});
+        if (m.todo) tags.append(h("span", {class: "badge", title: "Placeholders still open in this section"}, m.todo + " to do"));
+        if (m.docs) tags.append(h("span", {class: "badge doc", title: "Passages taken from documentation, videos, graphs or tables, not verified against the code"}, m.docs + " from docs"));
+        ul.append(h("li", {class: m.level === 1 ? "g" : ""}, h("a", {"data-target": m.id, onclick: () => { const el = $(m.id); if (el) el.scrollIntoView({behavior: "smooth", block: "start"}); }}, h("span", {}, m.text), tags)));
+      }
+      li.append(ul);
+    }
+    menu.append(li);
   }
-  if (!d.html) {
-    view.innerHTML = '<div class="empty"><h2>Empty document</h2><p>Load the current code or documentation to generate the SDD.</p></div>';
-    return;
-  }
-  view.innerHTML = '<article class="paper">' + d.html + '</article>';
-  const hist = document.createElement("details");
-  const sm = document.createElement("summary"); sm.textContent = "Load history";
-  hist.appendChild(sm);
-  for (const h of d.history) {
-    const p = document.createElement("div");
-    const n = v => Array.isArray(v) ? v.length : v;
-    p.textContent = `${fmt(h.at)}  ${h.kind === "documentation" ? "documentation" : "code"} (${h.mode}): ${h.files.join(", ")}  (+${n(h.added)} added, ${n(h.updated)} updated, ${n(h.unchanged)} unchanged, ${n(h.removed)} removed)`;
-    hist.appendChild(p);
-  }
-  view.appendChild(hist);
-  for (const m of d.menu) {
-    const item = document.createElement("li");
-    item.className = m.level === 1 ? "g" : "l2";
-    const a = document.createElement("a");
-    a.dataset.target = m.id;
-    const t = document.createElement("span"); t.textContent = m.text; a.appendChild(t);
-    const tags = document.createElement("span"); tags.className = "tags";
-    if (m.todo) { const b = document.createElement("span"); b.className = "badge"; b.textContent = m.todo + " to do"; b.title = "Placeholders still open in this section"; tags.appendChild(b); }
-    if (m.docs) { const b = document.createElement("span"); b.className = "badge doc"; b.textContent = m.docs + " from docs"; b.title = "Passages in this section taken from documentation, not verified against the code"; tags.appendChild(b); }
-    a.appendChild(tags);
-    a.addEventListener("click", () => { $(m.id).scrollIntoView({behavior: "smooth", block: "start"}); });
-    item.appendChild(a); menu.appendChild(item);
-  }
-  $("codeBox").open = !d.bots;
-  if (!d.bots && !d.documentation.length) $("docBox").open = false;
-  spy();
 }
 
 function spy() {
-  const links = [...document.querySelectorAll("#menu a")];
+  const links = [...document.querySelectorAll("#menu ul a")];
   const on = () => {
     let active = null;
     for (const a of links) { const el = $(a.dataset.target); if (el && el.getBoundingClientRect().top < 140) active = a; }
@@ -278,71 +390,74 @@ function spy() {
   $("main").onscroll = on; window.onscroll = on; on();
 }
 
-function describe(r, kind) {
-  const n = v => Array.isArray(v) ? v.length : v;
-  if (r.noop) return `No changes: this content is already stored.`;
-  return `${r.mode === "add" ? "Added" : "Overwrote"} ${kind}: ${n(r.added)} added, ${n(r.updated)} updated, ${n(r.unchanged)} unchanged, ${n(r.removed)} removed` + (r.intake ? `, ${r.intake} intake file(s)` : "") + ".";
+async function show() {
+  const view = $("view"); view.replaceChildren();
+  if (!S.project) { view.append(h("div", {class: "empty"}, h("h2", {}, "No project selected"), h("p", {}, "Select a project on the left, or create a new one. Then choose SDD, Code, Documentation, Videos, Graphs or Tables."))); renderMenu(); return; }
+  let content;
+  if (S.view === "sdd") content = await viewSDD();
+  else content = [h("div", {class: "page"}, {code: viewCode, docs: viewDocs, videos: viewVideos, graphs: viewGraphs, tables: viewTables}[S.view]())];
+  view.append(...content);
+  renderMenu(); if (S.view === "sdd") spy();
+  $("main").scrollTop = 0;
 }
 
-async function runLoad({filesEl, pathsEl, modeName, msg, detail, btn, route, allowed, extra, kind}) {
-  const files = [...$(filesEl).files], paths = $(pathsEl).value.trim();
-  if (!current) { say(msg, "Create a document first.", "err"); return; }
-  if (!files.length && !paths) { say(msg, "Choose a file or enter a path.", "err"); return; }
-  const bad = files.find(f => !allowed.test(f.name));
-  if (bad) { say(msg, bad.name + ": not a supported file type here.", "err"); return; }
-  const mode = document.querySelector(`input[name=${modeName}]:checked`).value;
-  if (mode === "overwrite" && !confirm(`Overwrite the stored ${kind} of "${current}"?`)) return;
-  $(btn).disabled = true; say(msg, "Loading..."); $(detail).replaceChildren();
-  try {
-    const staged = [];
-    for (const [i, f] of files.entries()) staged.push((await stage(f, `File ${i + 1} of ${files.length}`, msg)).token);
-    say(msg, "Reading...");
-    const j = await post(route, {doc: current, mode, paths, staged, ...extra()});
-    const r = j.report;
-    say(msg, describe(r, kind), "ok");
-    const names = r.names || {added: r.added, updated: r.updated, removed: r.removed};
-    for (const k of ["added", "updated", "removed"]) {
-      if (names[k] && names[k].length) {
-        const d = document.createElement("div");
-        d.textContent = k + ": " + names[k].map(x => x.split("/").pop()).join(", ");
-        $(detail).appendChild(d);
-      }
-    }
-    if (r.already_loaded && r.already_loaded.length) { const d = document.createElement("div"); d.textContent = "already loaded before: " + r.already_loaded.join(", "); $(detail).appendChild(d); }
-    $(filesEl).value = ""; $(pathsEl).value = "";
-    await refreshDocs(j.name);
-  } catch (e) { say(msg, e.message === "Failed to fetch" ? "Cannot reach the app. Check that run.bat is still running." : e.message, "err"); }
-  finally { $(btn).disabled = false; }
+async function go(viewId) {
+  S.view = viewId; store.set("sdd.view", viewId); S.sdd = null;
+  await loadInfo(); await show();
 }
 
-$("cload").addEventListener("click", () => runLoad({filesEl: "cfiles", pathsEl: "cpaths", modeName: "cmode", msg: "cmsg", detail: "cdetail",
-  btn: "cload", route: "/api/load", allowed: /\.zip$/i, kind: "code", extra: () => ({title: $("title").value.trim()})}).then(() => { $("title").value = ""; }));
-$("dload").addEventListener("click", () => runLoad({filesEl: "dfiles", pathsEl: "dpaths", modeName: "dmode", msg: "dmsg", detail: "ddetail",
-  btn: "dload", route: "/api/documentation/load", allowed: /\.(pdf|docx|md|txt|json)$/i, kind: "documentation", extra: () => ({})}));
+async function select(name, startAtCode) {
+  S.project = name || null; S.sdd = null; S.flash = null;
+  if (name) store.set("sdd.doc", name);
+  if (!name) { $("dataDir").textContent = ""; await show(); return; }
+  await loadInfo();
+  if (S.info.fresh || startAtCode) S.view = "code";  // a project with nothing in it starts at Code
+  await show();
+}
 
-$("docSel").addEventListener("change", async e => { current = e.target.value; await showDoc(); });
+async function boot(want) {
+  const docs = await api("/api/docs");
+  const sel = $("projSel"); sel.replaceChildren();
+  for (const d of docs) sel.append(h("option", {value: d.name}, `${d.name} (${d.bots} bots)`));
+  const pick = [want, store.get("sdd.doc")].find(x => x && docs.some(d => d.name === x)) || (docs[0] && docs[0].name);
+  if (pick) sel.value = pick;
+  await select(pick || null);
+  checkRecover();
+}
+
+// ------------------------------------------------------------- projects ---
+$("projSel").addEventListener("change", async e => { await select(e.target.value); });
 $("newBtn").addEventListener("click", () => { $("newRow").hidden = false; $("newName").focus(); });
 $("newOk").addEventListener("click", async () => {
-  const n = $("newName").value.trim();
-  if (!/^[A-Za-z0-9][A-Za-z0-9 _.-]{0,59}$/.test(n)) { say("cmsg", "Name: 1 to 60 letters, digits, spaces, dot, dash or underscore.", "err"); return; }
-  const o = document.createElement("option"); o.value = n; o.textContent = n + " (new)";
-  $("docSel").appendChild(o); $("docSel").value = n; current = n;
-  $("newRow").hidden = true; $("newName").value = "";
-  $("view").textContent = ""; const e = document.createElement("div"); e.className = "empty";
-  const h = document.createElement("h2"); h.textContent = "New document: " + n; const p = document.createElement("p"); p.textContent = "Load the current code, then add documentation to fill the gaps.";
-  e.append(h, p); $("view").appendChild(e);
-  $("bar").hidden = true; $("menu").replaceChildren(); $("csources").replaceChildren(); $("dlist").replaceChildren(); say("cmsg", ""); $("codeBox").open = true;
+  const name = $("newName").value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9 _.-]{0,59}$/.test(name)) { alert("Name: 1 to 60 letters, digits, spaces, dot, dash or underscore."); return; }
+  if (![...$("projSel").options].some(o => o.value === name)) $("projSel").append(h("option", {value: name}, name + " (new)"));
+  $("projSel").value = name; $("newRow").hidden = true; $("newName").value = "";
+  await select(name, true);
 });
 
-$("dlDocx").addEventListener("click", () => { if (current) location.href = `/download/${encodeURIComponent(current)}/docx`; });
-$("dlMd").addEventListener("click", () => { if (current) location.href = `/download/${encodeURIComponent(current)}/md`; });
-$("delBtn").addEventListener("click", async () => {
-  if (!current || !confirm(`Delete "${current}" permanently, including its code and documentation? A backup copy is kept in the data folder.`)) return;
-  await post("/api/delete", {name: current});
-  current = null; await refreshDocs();
+async function recover(folder) {
+  const j = await post("/api/recover", {folder});
+  return Object.entries(j.imported).map(([a, b]) => a === b ? a : `${a} as ${b}`);
+}
+async function checkRecover() {
+  let found = [];
+  try { found = await api("/api/recover"); } catch (e) { return; }
+  $("recover").hidden = !found.length;
+  const ul = $("recoverList"); ul.replaceChildren();
+  for (const f of found) ul.append(h("li", {}, h("span", {}, f.folder, h("small", {}, f.documents.join(", "))),
+    h("button", {class: "tiny", onclick: async () => { try { const r = await recover(f.folder); $("rmsg").textContent = r.length ? "Recovered: " + r.join(", ") : "Nothing to import."; await boot(); } catch (e) { $("rmsg").textContent = e.message; } }}, "Import")));
+}
+$("rbtn").addEventListener("click", async () => {
+  const f = $("rpath").value.trim();
+  if (!f) { $("rmsg").textContent = "Enter a folder path."; return; }
+  try { const r = await recover(f); $("rmsg").textContent = "Recovered: " + r.join(", "); $("rpath").value = ""; await boot(); }
+  catch (e) { $("rmsg").textContent = e.message; $("rmsg").className = "msg err"; }
 });
 
-refreshDocs().catch(e => say("cmsg", e.message, "err"));
+S.view = store.get("sdd.view") || "sdd";
+if (!VIEWS.some(v => v.id === S.view)) S.view = "sdd";
+boot().catch(e => { $("view").textContent = e.message; });
 </script>
 </body>
 </html>

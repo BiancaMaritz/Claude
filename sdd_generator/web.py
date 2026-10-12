@@ -10,11 +10,14 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import tempfile
 import threading
+import zipfile
 import webbrowser
+from io import BytesIO
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -23,8 +26,11 @@ from .analyze import analyse
 from .docparse import parse_document
 from .document import build
 from .loader import load_export
+from .media import (CONTENT_TYPES, IMAGE_EXT, SECTION_KEYS, SECTIONS, TRANSCRIPT_EXT, VIDEO_EXT, ext_of,
+                    new_id, parse_transcript)
 from .render import to_docx, to_html, to_markdown
 from .store import Store, export_from_dict, find_stored_documents, valid_name
+from .tables import TABLE_EXT, analyze_file
 
 CHUNK = 1024 * 1024
 STATIC = os.path.join(os.path.dirname(__file__), "static")
@@ -141,6 +147,31 @@ def classify_docs(staged, paths):
     return parsed, intakes
 
 
+def classify_tables(staged, paths):
+    """Table schemas from staged uploads and local paths (a file, or a folder of CSV/Excel files).
+
+    Returns (tables, file names). A table named twice keeps the later one.
+    """
+    items = list(staged)
+    for raw in paths:
+        path = raw.strip().strip('"').strip("'")
+        if not os.path.exists(path):
+            raise ValueError(f"{path}: not found on this machine.")
+        if os.path.isdir(path):
+            found = sorted(os.path.join(r, f) for r, _, fs in os.walk(path) for f in fs
+                           if f.lower().endswith(TABLE_EXT) and not f.startswith(("~$", ".")))
+            if not found:
+                raise ValueError(f"{path}: no .csv, .tsv or .xlsx files in that folder.")
+            items += [(os.path.basename(f), f) for f in found[:200]]
+        else:
+            items.append((os.path.basename(path), path))
+    tables = {}
+    for label, path in items:
+        for t in analyze_file(path, label):
+            tables[t["name"]] = t
+    return list(tables.values()), [label for label, _ in items]
+
+
 class App:
     def __init__(self, data_dir):
         self.store = Store(data_dir)
@@ -164,7 +195,7 @@ class App:
     def stage(self, label, rfile, length):
         """Stream an upload to disk in chunks, so file size never depends on memory."""
         ext = os.path.splitext(label)[1].lower()
-        if ext not in (".zip", ".json") + DOC_EXT:
+        if ext not in (".zip", ".json") + DOC_EXT + VIDEO_EXT + IMAGE_EXT + TRANSCRIPT_EXT + TABLE_EXT:
             raise ValueError(f"{label}: unsupported file type.")
         token = secrets.token_hex(8)
         path = os.path.join(self.staging, token + ext)
@@ -202,15 +233,99 @@ class App:
         doc = self.store.get(name)
         if doc is None:
             return None
+        key = (doc["updated"], doc.get("rev", 0))
         hit = self._cache.get(name)
-        if hit and hit[0] == doc["updated"]:
+        if hit and hit[0] == key:
             return doc, hit[1]
         ex = export_from_dict(doc["export"])
-        blocks = build(ex, analyse(ex), doc["intake"], title=doc["title"],
-                       date=datetime.date.today().isoformat(), docs=doc["documentation"]
-                       ) if ex.bots or doc["documentation"] else []
-        self._cache[name] = (doc["updated"], blocks)
+        extra = {"videos": doc["videos"], "graphs": doc["graphs"], "tables": doc["tables"], "project": name,
+                 "media_dir": self.store.media_dir(name)}
+        has_content = ex.bots or doc["documentation"] or doc["videos"] or doc["graphs"] or doc["tables"]
+        blocks = build(ex, analyse(ex), doc["intake"], title=doc["title"], date=datetime.date.today().isoformat(),
+                       docs=doc["documentation"], extra=extra) if has_content else []
+        self._cache[name] = (key, blocks)
         return doc, blocks
+
+    def summary(self, name):
+        """Everything the menu views need about a project, without building the SDD."""
+        doc = self.store.get(name)
+        if doc is None:
+            if not valid_name(name):
+                return None
+            doc = {"title": name, "updated": "", "intake": {}, "sources": [], "documentation": [], "videos": [],
+                   "graphs": [], "tables": [], "history": [], "export": {"bots": {}}, "fresh": True}
+        folders = {}
+        for path in doc["export"]["bots"]:
+            parts = path.split("/")
+            folder = "/".join(parts[2:-1]) or "(root)"
+            folders[folder] = folders.get(folder, 0) + 1
+        item = lambda x: {k: v for k, v in x.items() if k not in ("transcript", "path")}
+        return {
+            "name": name, "title": doc["title"], "updated": doc["updated"], "data_dir": self.store.root,
+            "fresh": bool(doc.get("fresh")),
+            "has_intake": bool(doc["intake"]), "sections": [{"key": k, "label": l} for k, l in SECTIONS],
+            "code": {"bots": len(doc["export"]["bots"]),
+                     "sources": [{"name": x["name"], "at": x.get("at", "")} for x in doc["sources"]],
+                     "folders": [{"folder": f, "bots": n} for f, n in sorted(folders.items())]},
+            "documentation": [{"name": d["name"], "fp": d["fp"], "pages": d["pages"], "sections": sorted(d["sections"])}
+                              for d in doc["documentation"]],
+            "videos": [dict(item(v), url=f"/media/{name}/{v['id']}", has_file=self._media_path(name, v) is not None,
+                            transcript=({"name": v["transcript"]["name"], "chars": v["transcript"]["chars"]}
+                                        if v.get("transcript") else None)) for v in doc["videos"]],
+            "graphs": [dict(item(g), url=f"/media/{name}/{g['id']}") for g in doc["graphs"]],
+            "tables": doc["tables"],
+            "history": doc["history"][-12:][::-1],
+        }
+
+    def _media_path(self, name, item):
+        """Absolute path of a stored or linked media file, or None if it is gone."""
+        path = item.get("path") if item.get("kind") == "path" else os.path.join(self.store.media_dir(name), item["file"])
+        return path if path and os.path.isfile(path) else None
+
+    def media_for(self, name, item_id):
+        doc = self.store.get(name)
+        if not doc or not re.fullmatch(r"[0-9a-f]{12}", item_id or ""):
+            return None
+        for kind in ("videos", "graphs"):
+            for it in doc[kind]:
+                if it["id"] == item_id:
+                    path = self._media_path(name, it)
+                    return (path, CONTENT_TYPES.get(ext_of(path), "application/octet-stream")) if path else None
+        return None
+
+    def add_media(self, name, kind, staged, paths, section, caption=""):
+        """Add videos or graphs from staged uploads and local paths. Returns the new items."""
+        if section not in SECTION_KEYS:
+            raise ValueError("Unknown section.")
+        allowed = VIDEO_EXT if kind == "videos" else IMAGE_EXT
+        what = "video" if kind == "videos" else "image"
+        items = [(label, path, True) for label, path in staged]
+        for raw in paths:
+            path = raw.strip().strip('"').strip("'")
+            if not os.path.isfile(path):
+                raise ValueError(f"{path}: not found on this machine.")
+            items.append((os.path.basename(path), path, False))
+        if not items:
+            raise ValueError(f"Choose a {what} file or give its path.")
+        for label, _, _ in items:
+            if ext_of(label) not in allowed:
+                raise ValueError(f"{label}: not a supported {what} file ({', '.join(allowed)}).")
+        added = []
+        for label, path, staged_file in items:
+            item_id = new_id()
+            entry = {"id": item_id, "name": label, "size": os.path.getsize(path), "section": section,
+                     "caption": caption[:200], "added": datetime.datetime.now().isoformat(timespec="seconds")}
+            if kind == "videos":
+                entry["transcript"] = None
+            if staged_file or kind == "graphs":  # uploads and images are kept in the project's media folder
+                dest = os.path.join(self.store.media_dir(name), item_id + ext_of(label))
+                (os.replace if staged_file else shutil.copy2)(path, dest)
+                entry.update(kind="file", file=item_id + ext_of(label))
+            else:  # a video given by path stays where it is; copying gigabytes would help nobody
+                entry.update(kind="path", path=os.path.abspath(path))
+            self.store.add_item(name, kind, entry)
+            added.append(entry)
+        return added
 
 
 def make_handler(app: App, port: int):
@@ -225,6 +340,43 @@ def make_handler(app: App, port: int):
                 self.send_header(k, v)
             self.end_headers()
             self.wfile.write(body)
+
+        def _file(self, path, ctype):
+            """Serve a local file with Range support, so a video can be played and skipped through."""
+            size = os.path.getsize(path)
+            start, end, code = 0, size - 1, 200
+            m = re.fullmatch(r"bytes=(\d*)-(\d*)", (self.headers.get("Range") or "").strip())
+            if m and (m.group(1) or m.group(2)):
+                a, b = m.groups()
+                start = max(0, size - int(b)) if not a else int(a)
+                end = min(size - 1, int(b)) if (a and b) else size - 1
+                if start > end or start >= size:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{size}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                code = 206
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(end - start + 1))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            if code == 206:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.end_headers()
+            try:
+                with open(path, "rb") as fh:
+                    fh.seek(start)
+                    left = end - start + 1
+                    while left > 0:
+                        chunk = fh.read(min(CHUNK, left))
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        left -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass  # the player stopped reading, which is normal when seeking
 
         def _json(self, obj, code=200):
             self._send(code, json.dumps(obj).encode("utf-8"), "application/json")
@@ -250,6 +402,13 @@ def make_handler(app: App, port: int):
                 return self._json(app.store.list())
             if path == "/api/recover":
                 return self._json([{"folder": f, "documents": n} for f, n in app.elsewhere()])
+            if path == "/api/project":
+                res = app.summary((q.get("name") or [""])[0])
+                return self._json(res) if res else self._json({"error": "No such project."}, 404)
+            if path.startswith("/media/"):
+                parts = path.split("/")
+                found = app.media_for(parts[2], parts[3]) if len(parts) == 4 else None
+                return self._file(*found) if found else self._json({"error": "Not found."}, 404)
             if path == "/api/doc":
                 name = (q.get("name") or [""])[0]
                 res = app.generate(name)
@@ -272,6 +431,15 @@ def make_handler(app: App, port: int):
                 if res and res[1] and fmt in ("docx", "md", "json"):
                     doc, blocks = res
                     stem = parts[1].replace(" ", "_") + "_SDD"
+                    images = [b[1] for b in blocks if b[0] == "img" and os.path.exists(b[1]["path"])]
+                    if fmt == "md" and images:  # the Markdown links to media/, so ship it as a bundle
+                        buf = BytesIO()
+                        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+                            z.writestr("SDD.md", to_markdown(blocks))
+                            for im in {i["file"]: i for i in images}.values():
+                                z.write(im["path"], "media/" + im["file"])
+                        data, ctype = buf.getvalue(), "application/zip"
+                        return self._send(200, data, ctype, {"Content-Disposition": f'attachment; filename="{stem}_md.zip"'})
                     if fmt == "md":
                         data, ctype = to_markdown(blocks).encode("utf-8"), "text/markdown; charset=utf-8"
                     elif fmt == "json":
@@ -333,6 +501,56 @@ def make_handler(app: App, port: int):
                     finally:
                         app.drop_staged(tokens)
                     return self._json({"ok": True, "name": name, "report": report})
+                if u.path in ("/api/video/add", "/api/graph/add", "/api/video/transcript", "/api/tables/load"):
+                    req = json.loads(body or b"{}")
+                    tokens = [str(t) for t in req.get("staged", [])]
+                    try:  # staged uploads are always removed, whether or not the request succeeds
+                        name = str(req.get("doc", "")).strip()
+                        if not valid_name(name):
+                            raise ValueError("Project name must be 1 to 60 letters, digits, spaces, dot, dash or underscore.")
+                        paths = [x for x in str(req.get("paths", "")).splitlines() if x.strip()]
+                        staged = app.take_staged(tokens)
+                        if u.path == "/api/tables/load":
+                            if not staged and not paths:
+                                raise ValueError("Choose a table export or give its path.")
+                            found = classify_tables(staged, paths)
+                            report = app.store.load_tables(name, str(req.get("mode", "add")), found[0], found[1])
+                            return self._json({"ok": True, "report": report})
+                        if u.path == "/api/video/transcript":
+                            doc = app.store.get(name)
+                            if not doc or not any(v["id"] == req.get("id") for v in doc["videos"]):
+                                raise ValueError("No such video.")
+                            files = staged + [(os.path.basename(x.strip().strip('"')), x.strip().strip('"')) for x in paths]
+                            if len(files) != 1 or not os.path.isfile(files[0][1]):
+                                raise ValueError("Give exactly one transcript file.")
+                            t = parse_transcript(files[0][1], files[0][0])
+                            return self._json({"ok": True, "item": app.store.update_item(name, "videos", req["id"], {"transcript": t})["id"]})
+                        kind = "videos" if u.path == "/api/video/add" else "graphs"
+                        added = app.add_media(name, kind, staged, paths, str(req.get("section", "appendix")),
+                                              str(req.get("caption", "")))
+                        return self._json({"ok": True, "added": [a["name"] for a in added]})
+                    finally:
+                        app.drop_staged(tokens)
+                if u.path == "/api/item/update":
+                    req = json.loads(body or b"{}")
+                    fields = {k: req[k] for k in ("section", "caption") if k in req}
+                    if req.get("transcript") is None and "transcript" in req:
+                        fields["transcript"] = None
+                    app.store.update_item(str(req.get("doc", "")), str(req.get("kind", "")), str(req.get("id", "")), fields)
+                    return self._json({"ok": True})
+                if u.path == "/api/item/remove":
+                    req = json.loads(body or b"{}")
+                    name = str(req.get("doc", ""))
+                    item = app.store.remove_item(name, str(req.get("kind", "")), str(req.get("id", "")))
+                    if item and item.get("kind") == "file":
+                        try:
+                            os.remove(os.path.join(app.store.media_dir(name), item["file"]))
+                        except OSError:
+                            pass
+                    return self._json({"ok": bool(item)})
+                if u.path == "/api/tables/remove":
+                    req = json.loads(body or b"{}")
+                    return self._json({"ok": app.store.remove_table(str(req.get("doc", "")), str(req.get("table", "")))})
                 if u.path == "/api/recover":
                     req = json.loads(body or b"{}")
                     got = app.store.import_from(str(req.get("folder", "")))

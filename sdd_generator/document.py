@@ -4,13 +4,19 @@ Block forms:
   ("h", level, text)  ("p", text)  ("todo", text)  ("ul", [text, ...])
   ("table", [header, ...], [[cell, ...], ...])  cell = str | list[str] (one line each)
   ("src", text)   caption naming the documentation a following block came from
+  ("img", {"path", "url", "file"}, caption)   a graph; rendered per output format
 """
 from __future__ import annotations
 
 import json
 from collections import Counter, defaultdict
 
+import os
+import re
+
 from .docfill import Docs, documented_bots, same_thing
+from .docparse import heading_key
+from .media import stamp, transcript_paragraphs, human_size
 from .loader import Export
 
 TODO = "[TO BE COMPLETED]"
@@ -55,9 +61,10 @@ def _outline(steps):
     return out
 
 
-def build(ex: Export, a: dict, intake: dict, title=None, date=None, docs=None) -> list:
+def build(ex: Export, a: dict, intake: dict, title=None, date=None, docs=None, extra=None) -> list:
     B = []
     D = Docs(docs)
+    extra = extra or {}
     ref, per = a["ref"], a["per"]
     short = lambda p: ex.bots[p].name
     label = lambda p: f"{ref[p]}: {short(p)}"
@@ -145,6 +152,7 @@ def build(ex: Export, a: dict, intake: dict, title=None, date=None, docs=None) -
                     [ref[b] for b in i["bots"]]] for t, i in a["tables"].items()]))
     else:
         B.append(("p", "No SQL statements found in the bots."))
+    B += _table_blocks(a, extra.get("tables", []), D)
     B += D.blocks("erd")
     B.append(("todo", f"{TODO}: entity relationship diagram and key definitions"
                       + (" (diagrams in documentation are not imported)." if D.has("erd") else ".")))
@@ -297,6 +305,12 @@ def build(ex: Export, a: dict, intake: dict, title=None, date=None, docs=None) -
     if notes:
         B.append(("h", 1, "Appendix F. Developer Comments in Bots"))
         B.append(("table", ["Bot", "Comment"], [[b, c] for b, c in notes]))
+    placed, loose = _media_blocks(extra)
+    if loose:
+        B.append(("h", 1, "Appendix H. Videos and Graphs"))
+        B.append(("p", "Walkthrough videos and graphs that are not tied to a section of the SDD."))
+        B += loose
+    _attach(B, placed)
     if D:
         B.append(("h", 1, "Appendix G. Documentation Coverage"))
         B.append(("p", "Which sections were read from each documentation file and which of them ended up "
@@ -305,3 +319,86 @@ def build(ex: Export, a: dict, intake: dict, title=None, date=None, docs=None) -
                   [[d["name"], str(d["pages"] or "-"), ", ".join(sorted(d["sections"])),
                     ", ".join(sorted(D.used.get(d["name"], []))) or "none"] for d in D.docs]))
     return B
+
+
+# ------------------------------------------------- tables, videos and graphs ---
+
+def _plain(name):
+    """Compare table names ignoring case, punctuation and a leading schema such as dbo."""
+    return re.sub(r"[^a-z0-9]", "", re.sub(r"^\[?dbo\]?\.", "", name.lower()))
+
+
+def _table_blocks(a, tables, D):
+    """Schemas from table exports, checked against the columns the code writes."""
+    if not tables:
+        return []
+    out = [("h", 3, "Tables from current exports"),
+           ("src", "From table exports: " + ", ".join(sorted({t["source"] for t in tables})) +
+                   ". Column types are inferred from the data; no values are stored."),
+           ("table", ["Table", "Rows", "Columns"],
+            [[t["name"], f"{t['rows']:,}", [f"{c['name']} ({c['type']})" for c in t["columns"]]] for t in tables])]
+    exported = {_plain(t["name"]): t for t in tables}
+    notes, unmatched = [], []
+    for name, info in a["tables"].items():
+        t = exported.get(_plain(name))
+        if t is None:
+            unmatched.append(name)
+            continue
+        have = {c["name"].lower() for c in t["columns"]}
+        missing = [c for c in info["columns"] if c.lower() not in have]
+        if missing:
+            notes.append(f"{name}: written by the code but not in the exported table: {', '.join(missing)}")
+    if notes:
+        out += [("p", "Code and table exports disagree on:"), ("ul", notes)]
+    if unmatched:
+        out.append(("p", "Referenced by SQL in the code but no export was loaded for: " + ", ".join(sorted(unmatched))))
+    extra_tables = [t["name"] for k, t in exported.items() if k not in {_plain(n) for n in a["tables"]}]
+    if extra_tables:
+        out.append(("p", "Exported but not referenced by SQL in the code: " + ", ".join(sorted(extra_tables))))
+    return out
+
+
+def _media_blocks(extra):
+    """Blocks for videos and graphs: {section key: blocks} for placed ones, plus the loose appendix blocks."""
+    placed, loose = {}, []
+    project, media_dir = extra.get("project"), extra.get("media_dir")
+    for g in extra.get("graphs", []):
+        key = g.get("section", "appendix")
+        img = {"path": os.path.join(media_dir or "", g["file"]), "url": f"/media/{project}/{g['id']}", "file": g["file"]}
+        blocks = [("src", f"From graph: {g['name']}. Not verified against the code."),
+                  ("img", img, g.get("caption") or g["name"])]
+        (loose if key == "appendix" else placed.setdefault(key, [])).extend(blocks)
+    videos = extra.get("videos", [])
+    for v in videos:
+        key = v.get("section", "appendix")
+        t = v.get("transcript")
+        if not t:
+            continue
+        blocks = [("src", f"From walkthrough video: {v['name']} (transcript: {t['name']}). Not verified against the code.")]
+        blocks += [("p", x) for x in transcript_paragraphs(t["cues"])]
+        (loose if key == "appendix" else placed.setdefault(key, [])).extend(blocks)
+    if videos:
+        loose.insert(0, ("table", ["Video", "Size", "Transcript", "Section"],
+                         [[v["name"], human_size(v.get("size", 0)), (v.get("transcript") or {}).get("name", "none"),
+                           v.get("section", "appendix")] for v in videos]))
+        if any(not v.get("transcript") for v in videos):
+            loose.insert(1, ("p", "A video without a transcript adds nothing to the SDD: its audio is not read."))
+    return placed, loose
+
+
+def _attach(B, placed):
+    """Insert blocks at the end of the section they belong to, found by heading title."""
+    if not placed:
+        return
+    ends = {}  # key -> index just after the section's last block (before the next level 1/2 heading)
+    cur = None
+    for i, b in enumerate(B):
+        if b[0] == "h" and b[1] <= 2:
+            if cur:
+                ends[cur] = i
+            cur = heading_key(b[2]) if b[1] == 2 else None
+    if cur:
+        ends[cur] = len(B)
+    for key, i in sorted(ends.items(), key=lambda kv: -kv[1]):
+        if key in placed:
+            B[i:i] = placed[key]

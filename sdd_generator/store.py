@@ -99,12 +99,13 @@ class Store:
             return None
         with open(self._path(name), encoding="utf-8") as fh:
             doc = json.load(fh)
-        doc.setdefault("documentation", [])
-        doc.setdefault("sources", [])
+        for key in ("documentation", "sources", "videos", "graphs", "tables"):
+            doc.setdefault(key, [])
         return doc
 
     def save(self, name, doc):
         doc["updated"] = datetime.datetime.now().isoformat(timespec="seconds")
+        doc["rev"] = doc.get("rev", 0) + 1  # distinguishes two saves inside the same second
         self._backup(name)
         tmp = self._path(name) + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
@@ -150,6 +151,7 @@ class Store:
             doc = {"title": title or (existing or {}).get("title") or name,
                    "intake": (existing or {}).get("intake", {}),
                    "documentation": (existing or {}).get("documentation", []),
+                   **{k: (existing or {}).get(k, []) for k in ("videos", "graphs", "tables")},
                    "export": export_to_dict(Export(source=name)), "history": (existing or {}).get("history", []),
                    "sources": []}
         else:
@@ -196,7 +198,116 @@ class Store:
 
     def _blank(self, name, title=None):
         return {"title": title or name, "intake": {}, "documentation": [], "sources": [], "history": [],
-                "export": export_to_dict(Export(source=name))}
+                "videos": [], "graphs": [], "tables": [], "export": export_to_dict(Export(source=name))}
+
+    def media_dir(self, name):
+        """Where a project's uploaded videos and graphs live, beside the documents folder."""
+        d = os.path.join(os.path.dirname(os.path.abspath(self.root)), "media", name)
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def _stamp(self):
+        return datetime.datetime.now().isoformat(timespec="seconds")
+
+    def _doc_for_edit(self, name, title=None):
+        existing = self.get(name)
+        return (copy.deepcopy(existing) if existing else self._blank(name, title)), existing
+
+    # -------------------------------------------------------- videos and graphs ---
+
+    def add_item(self, name, kind, item):
+        """Add a video or graph record to a project (the file itself is already in media_dir)."""
+        if kind not in ("videos", "graphs"):
+            raise ValueError("Unknown kind.")
+        doc, _ = self._doc_for_edit(name)
+        doc[kind].append(item)
+        doc["history"].append({"at": self._stamp(), "kind": kind, "mode": "add", "files": [item["name"]],
+                               "added": 1, "updated": 0, "unchanged": 0, "removed": 0})
+        self.save(name, doc)
+
+    def update_item(self, name, kind, item_id, fields):
+        doc = self.get(name)
+        if not doc or kind not in ("videos", "graphs"):
+            raise ValueError("No such project.")
+        item = next((x for x in doc[kind] if x["id"] == item_id), None)
+        if not item:
+            raise ValueError("No such item.")
+        from .media import SECTION_KEYS
+
+        if "section" in fields:
+            if fields["section"] not in SECTION_KEYS:
+                raise ValueError("Unknown section.")
+            item["section"] = fields["section"]
+        if "caption" in fields:
+            item["caption"] = str(fields["caption"])[:200]
+        if "transcript" in fields:
+            item["transcript"] = fields["transcript"]
+        self.save(name, doc)
+        return item
+
+    def remove_item(self, name, kind, item_id):
+        """Remove a record. Returns the removed item so the caller can delete a stored file."""
+        doc = self.get(name)
+        if not doc or kind not in ("videos", "graphs"):
+            return None
+        item = next((x for x in doc[kind] if x["id"] == item_id), None)
+        if not item:
+            return None
+        doc[kind] = [x for x in doc[kind] if x["id"] != item_id]
+        self.save(name, doc)
+        return item
+
+    # ------------------------------------------------------------------ tables ---
+
+    def load_tables(self, name, mode, tables, filenames):
+        """Add table schemas to a project.
+
+        'add': new tables are added, and a table whose name already exists is replaced when its
+        content changed (the change is reported), or left alone when identical.
+        'overwrite': the project's tables become exactly these.
+        """
+        if mode not in ("add", "overwrite"):
+            raise ValueError("Mode must be add or overwrite.")
+        from .tables import diff_table
+
+        doc, existing = self._doc_for_edit(name)
+        before = {t["name"]: t for t in doc["tables"]}
+        if mode == "overwrite":
+            doc["tables"] = []
+        stamp = self._stamp()
+        report = {"mode": mode, "added": [], "replaced": [], "unchanged": [], "removed": [], "changes": {}}
+        current = {t["name"]: t for t in doc["tables"]}
+        for t in tables:
+            t = dict(t, loaded_at=stamp)
+            old = before.get(t["name"])
+            if old is None:
+                report["added"].append(t["name"])
+            elif old["fp"] == t["fp"]:
+                report["unchanged"].append(t["name"])
+                t = old  # nothing changed: keep the stored record as it is
+            else:
+                report["replaced"].append(t["name"])
+                report["changes"][t["name"]] = diff_table(old, t)
+            current[t["name"]] = t
+        if mode == "overwrite":
+            report["removed"] = sorted(set(before) - set(current))
+        doc["tables"] = sorted(current.values(), key=lambda x: x["name"].lower())
+        changed = existing is None or doc["tables"] != existing["tables"]
+        report["noop"] = not changed
+        if changed:
+            doc["history"].append({"at": stamp, "kind": "tables", "mode": mode, "files": filenames,
+                                   **{k: len(report[k]) for k in ("added", "replaced", "unchanged", "removed")},
+                                   "updated": len(report["replaced"])})
+            self.save(name, doc)
+        return report
+
+    def remove_table(self, name, table):
+        doc = self.get(name)
+        if not doc or not any(t["name"] == table for t in doc["tables"]):
+            return False
+        doc["tables"] = [t for t in doc["tables"] if t["name"] != table]
+        self.save(name, doc)
+        return True
 
     def load_docs(self, name, mode, parsed, intakes, title=None):
         """Add documentation files (parsed SDDs) and intake JSON to a document.

@@ -575,3 +575,193 @@ def test_web_recover_endpoint(tmp_path, client):
     code, body = client.call("POST", "/api/recover", json.dumps({"folder": str(tmp_path / "nope")}).encode(),
                              {"Content-Type": "application/json"})
     assert code == 400
+
+
+# ------------------------------------------- tables, videos, graphs, new layout ---
+
+def png_bytes():
+    import struct
+    import zlib
+
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data))
+
+    raw = zlib.compress(b"\x00\xff\x00\x00")  # one red pixel
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", raw) + chunk(b"IEND", b""))
+
+
+def test_table_analysis_csv_xlsx_and_diff(tmp_path):
+    import openpyxl
+
+    from sdd_generator.tables import analyze_file, diff_table
+
+    csv_path = tmp_path / "Rebates.csv"
+    csv_path.write_text("Id;Code;Amount;Day;Note\n1;007;12.5;2026-01-02;a\n2;008;3;03/01/2026;\n", encoding="cp1252")
+    (t,) = analyze_file(str(csv_path), "Rebates.csv")
+    types = {c["name"]: c["type"] for c in t["columns"]}
+    assert t["name"] == "Rebates" and t["rows"] == 2
+    assert types == {"Id": "int", "Code": "text", "Amount": "float", "Day": "date", "Note": "text"}
+    assert types["Code"] == "text"  # 007 is an identifier, not a number
+    assert [c["nonnull"] for c in t["columns"]][-1] == 1
+    assert "12.5" not in repr(t)    # values are never kept
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Summary"
+    ws.append(["Doc", "Total"])
+    ws.append(["A", 1.5])
+    wb.create_sheet("Lines").append(["Item"])
+    wb.save(tmp_path / "Book.xlsx")
+    sheets = {x["name"]: x["rows"] for x in analyze_file(str(tmp_path / "Book.xlsx"), "Book.xlsx")}
+    assert sheets == {"Summary": 1, "Lines": 0}  # one table per sheet; a header-only sheet is an empty table
+    csv2 = tmp_path / "Rebates2.csv"
+    csv2.write_text("Id,Amount,Extra\n1,2,x\n")
+    (t2,) = analyze_file(str(csv2), "Rebates.csv")
+    d = diff_table(t, t2)
+    assert d["added"] == ["Extra"] and set(d["removed"]) == {"Code", "Day", "Note"} and d["rows"] == [2, 1]
+    with pytest.raises(ValueError):
+        analyze_file(str(tmp_path / "x.txt"), "x.txt")
+
+
+def test_transcripts(tmp_path):
+    from sdd_generator.media import parse_transcript, transcript_paragraphs
+
+    srt = tmp_path / "a.srt"
+    srt.write_text("1\n00:00:01,000 --> 00:00:03,000\nHello there.\n\n2\n00:01:05,500 --> 00:01:07,000\nSecond <i>line</i>.\n")
+    t = parse_transcript(str(srt), "a.srt")
+    assert [c["t"] for c in t["cues"]] == [1.0, 65.5] and t["cues"][1]["text"] == "Second line."
+    assert transcript_paragraphs(t["cues"], limit=5)[1].startswith("[1:05] Second")
+    txt = tmp_path / "b.txt"
+    txt.write_text("First paragraph.\n\nSecond one.")
+    assert [c["text"] for c in parse_transcript(str(txt), "b.txt")["cues"]] == ["First paragraph.", "Second one."]
+    (tmp_path / "e.txt").write_text("   ")
+    with pytest.raises(ValueError):
+        parse_transcript(str(tmp_path / "e.txt"), "e.txt")
+
+
+def test_store_tables_add_replace_overwrite(tmp_path):
+    from sdd_generator.store import Store
+
+    def tbl(name, cols, rows, fp):
+        return {"name": name, "source": name + ".csv", "rows": rows, "fp": fp,
+                "columns": [{"name": c, "type": "text", "nonnull": rows} for c in cols]}
+
+    store = Store(str(tmp_path / "docs"))
+    r = store.load_tables("P", "add", [tbl("A", ["x"], 1, "f1"), tbl("B", ["y"], 2, "f2")], ["a.csv"])
+    assert r["added"] == ["A", "B"]
+    r = store.load_tables("P", "add", [tbl("A", ["x"], 1, "f1")], ["a.csv"])
+    assert r["noop"] and r["unchanged"] == ["A"]
+    r = store.load_tables("P", "add", [tbl("A", ["x", "z"], 5, "f3")], ["a.csv"])
+    assert r["replaced"] == ["A"] and r["changes"]["A"]["added"] == ["z"] and r["changes"]["A"]["rows"] == [1, 5]
+    assert {t["name"] for t in store.get("P")["tables"]} == {"A", "B"}      # B was not in this load: kept
+    r = store.load_tables("P", "overwrite", [tbl("C", ["q"], 1, "f4")], ["c.csv"])
+    assert r["removed"] == ["A", "B"] and [t["name"] for t in store.get("P")["tables"]] == ["C"]
+    assert store.remove_table("P", "C") and not store.remove_table("P", "C")
+
+
+def test_sdd_places_graphs_videos_and_tables(export_dir, tmp_path):
+    ex = load_export(str(export_dir))
+    a = analyse(ex)
+    media = tmp_path / "media"
+    media.mkdir()
+    (media / "g1.png").write_bytes(png_bytes())
+    cues = [{"t": 3.0, "text": "The bot starts by reading mail."}]
+    extra = {"project": "P", "media_dir": str(media),
+             "graphs": [{"id": "g1", "name": "erd.png", "file": "g1.png", "section": "erd", "caption": "The ERD"},
+                        {"id": "g2", "name": "loose.png", "file": "g1.png", "section": "appendix", "caption": ""}],
+             "videos": [{"id": "v1", "name": "walk.mp4", "size": 2048, "section": "process_description",
+                         "transcript": {"name": "walk.srt", "cues": cues, "chars": 30}},
+                        {"id": "v2", "name": "silent.mp4", "size": 10, "section": "appendix", "transcript": None}],
+             "tables": [{"name": "Jobs", "source": "Jobs.csv", "rows": 1200, "fp": "x",
+                         "columns": [{"name": "Status", "type": "text", "nonnull": 1200}]},
+                        {"name": "Orphan", "source": "Orphan.csv", "rows": 3, "fp": "y", "columns": []}]}
+    blocks = build(ex, a, {}, title="T", date="x", extra=extra)
+    md = to_markdown(blocks)
+    erd = md[md.index("### c. ERD Design"):md.index("### d. Business Rules")]
+    assert "![The ERD](media/g1.png)" in erd and "From graph: erd.png" in erd
+    assert "Tables from current exports" in erd and "1,200" in erd
+    assert "written by the code but not in the exported table: Tries" in erd          # code writes Jobs.Tries
+    assert "Exported but not referenced by SQL in the code: Orphan" in erd
+    assert "RunLog" in erd and "no export was loaded for: RunLog" in erd
+    pd = md[md.index("### a. Process Description"):md.index("### b. Priority")]
+    assert "From walkthrough video: walk.mp4" in pd and "[0:03] The bot starts by reading mail." in pd
+    assert "Appendix H. Videos and Graphs" in md and "silent.mp4" in md and "adds nothing" in md
+    from sdd_generator.render import to_docx, to_html
+
+    to_docx(blocks, str(tmp_path / "o.docx"))
+    import docx
+
+    assert len(docx.Document(str(tmp_path / "o.docx")).inline_shapes) == 2
+    html = to_html(blocks)[1]
+    assert '<img src="/media/P/g1"' in html
+
+
+def test_new_endpoints_end_to_end(export_dir, tmp_path, client):
+    import urllib.parse
+
+    def post(path, obj):
+        code, body = client.call("POST", path, json.dumps(obj).encode(), {"Content-Type": "application/json"})
+        return code, json.loads(body)
+
+    # a project nobody has saved yet is "fresh", with the section list the dropdowns need
+    code, body = client.call("GET", "/api/project?name=Fresh")
+    j = json.loads(body)
+    assert code == 200 and j["fresh"] and len(j["sections"]) > 10 and j["code"]["bots"] == 0
+    assert client.call("GET", "/api/project?name=../x")[0] == 404
+    client.load("P", [("a.zip", zip_of(export_dir))])
+
+    # video by upload: stored, summarised, served with Range, transcript attached, then removed
+    movie = b"0123456789" * 1000
+    code, tok = client.stage("walk.mp4", movie)
+    code, j = post("/api/video/add", {"doc": "P", "staged": [tok["token"]], "section": "process_description"})
+    assert code == 200 and j["added"] == ["walk.mp4"]
+    info = json.loads(client.call("GET", "/api/project?name=P")[1])
+    v = info["videos"][0]
+    assert v["has_file"] and v["transcript"] is None and "path" not in v and v["kind"] == "file"
+    code, body = client.call("GET", v["url"], headers={"Range": "bytes=10-19"})
+    assert code == 206 and body == b"0123456789"
+    assert client.call("GET", v["url"])[1] == movie
+    assert client.call("GET", "/media/P/zzzzzzzzzzzz")[0] == 404
+    code, tok = client.stage("walk.srt", b"1\n00:00:01,000 --> 00:00:02,000\nHello from the video.\n")
+    assert post("/api/video/transcript", {"doc": "P", "id": v["id"], "staged": [tok["token"]]})[0] == 200
+    assert json.loads(client.call("GET", "/api/project?name=P")[1])["videos"][0]["transcript"]["chars"] > 10
+    sdd = json.loads(client.call("GET", "/api/doc?name=P")[1])
+    assert "Hello from the video." in sdd["html"]
+    assert post("/api/item/update", {"doc": "P", "kind": "videos", "id": v["id"], "section": "bogus"})[0] == 400
+    # a video by path is linked, not copied
+    vp = tmp_path / "linked.mp4"
+    vp.write_bytes(b"x" * 50)
+    assert post("/api/video/add", {"doc": "P", "paths": str(vp), "section": "appendix"})[0] == 200
+    linked = [x for x in json.loads(client.call("GET", "/api/project?name=P")[1])["videos"] if x["kind"] == "path"][0]
+    assert client.call("GET", linked["url"])[1] == b"x" * 50
+    stored = os.listdir(client.app.store.media_dir("P"))
+    assert len(stored) == 1                                                  # only the uploaded one was copied
+    assert post("/api/item/remove", {"doc": "P", "kind": "videos", "id": v["id"]})[1]["ok"]
+    assert os.listdir(client.app.store.media_dir("P")) == []                 # its stored file is deleted
+
+    # graphs: wrong type refused, image placed in the SDD, Markdown ships as a bundle
+    code, tok = client.stage("flow.png", png_bytes())
+    assert post("/api/graph/add", {"doc": "P", "staged": [tok["token"]], "section": "erd", "caption": "Flow"})[0] == 200
+    code, tok = client.stage("bad.mp4", b"x")
+    assert post("/api/graph/add", {"doc": "P", "staged": [tok["token"]], "section": "erd"})[0] == 400
+    sdd = json.loads(client.call("GET", "/api/doc?name=P")[1])
+    assert '<img src="/media/P/' in sdd["html"]
+    code, body = client.call("GET", "/download/P/md")
+    assert body[:2] == b"PK"
+    with zipfile.ZipFile(__import__("io").BytesIO(body)) as z:
+        assert "SDD.md" in z.namelist() and any(n.startswith("media/") for n in z.namelist())
+
+    # tables: add, an unchanged reload, then a changed export replaces and reports the difference
+    code, tok = client.stage("Jobs.csv", b"Id,Status\n1,a\n2,b\n")
+    code, j = post("/api/tables/load", {"doc": "P", "mode": "add", "staged": [tok["token"]]})
+    assert j["report"]["added"] == ["Jobs"]
+    code, tok = client.stage("Jobs.csv", b"Id,Status\n1,a\n2,b\n")
+    assert post("/api/tables/load", {"doc": "P", "mode": "add", "staged": [tok["token"]]})[1]["report"]["noop"]
+    code, tok = client.stage("Jobs.csv", b"Id,Status,Tries\n1,a,1\n")
+    r = post("/api/tables/load", {"doc": "P", "mode": "add", "staged": [tok["token"]]})[1]["report"]
+    assert r["replaced"] == ["Jobs"] and r["changes"]["Jobs"]["added"] == ["Tries"]
+    # replacing all code keeps every other input
+    client.load("P", [("a.zip", zip_of(export_dir))], mode="overwrite")
+    kept = client.app.store.get("P")
+    assert kept["tables"] and kept["graphs"] and len(kept["videos"]) == 1
+    assert post("/api/tables/remove", {"doc": "P", "table": "Jobs"})[1]["ok"]

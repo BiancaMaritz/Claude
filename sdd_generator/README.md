@@ -18,20 +18,25 @@ run.bat
 
 Opens http://localhost:8765/ (bound to 127.0.0.1 only). Elsewhere: `python -m sdd_generator.web [--port N] [--data-dir DIR]`.
 
-**Left:** the document picker, two input menus (**Current Code** and **Documentation**), and the section menu. Each section shows how many placeholders are still open (yellow) and how many passages came from documentation (blue). **Right:** the expected SDD. Click a menu item to jump to that section.
+**Layout.** The left menu starts with **Select Project**. Once a project is chosen, its menu opens: **SDD, Code, Documentation, Videos, Graphs, Tables**. Clicking one shows its actions on the right. A new project starts at Code. Every load is saved at once; nothing needs reloading.
 
-**Priority.** What the code shows always wins. Next comes intake you typed in. Documentation only fills what would otherwise be `[TO BE COMPLETED]` or missing, and every passage from it sits under a blue *From documentation: file, page N* caption, because it was not verified against the code.
+**Priority.** What the code shows always wins. Next comes intake you typed in. Everything else only fills what would otherwise be `[TO BE COMPLETED]` or missing, and each passage sits under a blue caption naming its source, because it was not verified against the code.
 
-- **Current Code:** one or more export `.zip` files, chosen in the browser (streamed to disk in chunks, so size is limited only by disk space) or given as a path on this computer (a `.zip` or an extracted export folder; fastest for large exports). Only bot and manifest JSON is read, so a multi-gigabyte export loads in well under a second.
-  - **Add:** merges bots into the stored code. A bot at the same path is replaced; a manifest-only record never erases bot logic already stored.
-  - **Overwrite:** restarts the code from the files you load. Documentation and intake are kept.
-  - **Reloading the same content is detected.** Zips are identified by the size and CRC of their entries, folders by file hashes, so renaming or moving a file does not fool it. A load that changes nothing says "No changes", writes nothing and adds no history entry. Loading an older version still applies it.
-- **Documentation:** old SDDs as `.pdf`, `.docx` or `.md`, several at once, or a folder of them, plus an optional intake `.json` (see `intake.example.json`). Sections are recognised by title, whatever the numbering, so differently structured SDDs work. Text and tables are read; screenshots and diagrams are not.
-  - **Add:** keeps what is stored. The same file again changes nothing; a file with the same name but new content replaces the old copy.
-  - **Overwrite:** replaces all stored documentation and intake. Code is never touched.
-  - **Remove** takes one file out. Documentation can be loaded before, after or without code.
-  - What it fills: process description, MoSCoW, assumptions, requirements, success criteria, benefits, stakeholders, changes, business rules, ERD text. It also adds a documented process flow, documented triggers and reports, access and bot usernames for matching applications, and a list of documented bots not found in the code. Appendix G records what was read from each file and what was used.
-- **Download:** Word (.docx) or Markdown (.md) of exactly what the preview shows.
+| Menu | What you do there | What it adds to the SDD |
+|---|---|---|
+| **SDD** | Read the current SDD, generated from everything loaded each time you open it. Download Word or Markdown. The section list sits under the menu item, with open-item and from-docs counts. | |
+| **Code** | **Update: only what changed** merges the bots in the files into the stored code (use it when one part changed). **Replace everything** is a fresh reload. Zips of any size, or a path. Reloading identical content says "No changes". | Everything technical: bots, calls, I/O, applications, triggers, tables the SQL touches, review findings. |
+| **Documentation** | Old SDDs (`.pdf`, `.docx`, `.md`), several at once or a folder, plus an optional intake `.json`. Add, replace all, or remove one. | Process description, MoSCoW, requirements, benefits, stakeholders, rules, documented flows, triggers, reports, access details, and documented bots missing from the code. |
+| **Videos** | Upload a video (stored) or give a path (linked, not copied). It plays in the app. Attach a transcript (`.srt`, `.vtt`, `.txt`, `.md`, `.docx`) and pick the SDD section it belongs in. | The transcript text, in the chosen section or Appendix H. The audio itself is not read; a video without a transcript adds nothing. |
+| **Graphs** | Upload PNG, JPG, GIF or BMP images (ERDs, flows, screenshots, old or new), with a caption and an SDD section. | The image, embedded in the preview, the Word file and a Markdown bundle (`.zip` with a `media/` folder). |
+| **Tables** | Exports of current tables as CSV, TSV or Excel (one table per sheet). **Update** adds new tables and replaces any whose name already exists, showing what changed (columns added, removed or retyped, row counts). **Replace all** makes the stored set match the files. A per-table Replace button loads a newer export of one table. | Column names, inferred types and row counts in the ERD section, checked against the columns the SQL writes. Only the shape is stored, never cell values. |
+
+Details worth knowing:
+
+- Code loads: only bot and manifest JSON is read, so a multi-gigabyte export loads in well under a second. Zips are fingerprinted by entry size and CRC, so renaming a file does not fool the reload check. A manifest-only record never erases bot logic already stored.
+- Replacing code keeps documentation, videos, graphs and tables; replacing documentation keeps code; and so on. Each input is independent.
+- Documentation sections are recognised by title whatever the numbering. Text and tables are read; screenshots and diagrams are not (add them under Graphs).
+- Uploaded videos and images are kept in `data\media\<project>\`; videos given by path stay where they are.
 
 ### Where your data lives
 
