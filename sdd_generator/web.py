@@ -179,6 +179,7 @@ class App:
         self.store = Store(data_dir)
         self._cache = {}
         self._gap_cache = {}
+        self._erd_cache = {}
         self.staging = os.path.join(os.path.dirname(os.path.abspath(data_dir)), "staging")
         shutil.rmtree(self.staging, ignore_errors=True)  # leftovers from a previous run
         os.makedirs(self.staging)
@@ -242,7 +243,8 @@ class App:
             return doc, hit[1]
         ex = export_from_dict(doc["export"])
         extra = {"videos": doc["videos"], "graphs": doc["graphs"], "tables": doc["tables"], "project": name,
-                 "media_dir": self.store.media_dir(name), "acceptances": doc["acceptances"]}
+                 "media_dir": self.store.media_dir(name), "erd_dir": os.path.join(self.store.root, "erd", name),
+                 "acceptances": doc["acceptances"]}
         has_content = ex.bots or doc["documentation"] or doc["videos"] or doc["graphs"] or doc["tables"]
         blocks = build(ex, analyse(ex), doc["intake"], title=doc["title"], date=datetime.date.today().isoformat(),
                        docs=doc["documentation"], extra=extra) if has_content else []
@@ -262,6 +264,22 @@ class App:
         res = analyse_gaps(ex, analyse(ex), doc["documentation"], doc["tables"])
         res["rules"] = analyse_rules(ex, doc["documentation"], doc["acceptances"])
         self._gap_cache[name] = (key, res)
+        return res
+
+    def erd(self, name, inferred=True):
+        """(model, scene) of the project's database diagram, or None."""
+        from . import erd as erd_mod
+
+        doc = self.store.get(name)
+        if doc is None:
+            return None
+        key = (doc["updated"], doc.get("rev", 0), inferred)
+        hit = self._erd_cache.get(name)
+        if hit and hit[0] == key:
+            return hit[1]
+        m = erd_mod.model(analyse(export_from_dict(doc["export"])), doc["tables"], inferred)
+        res = (m, erd_mod.scene(m))
+        self._erd_cache[name] = (key, res)
         return res
 
     def summary(self, name):
@@ -428,6 +446,13 @@ def make_handler(app: App, port: int):
             if path == "/api/analysis":
                 res = app.gaps((q.get("name") or [""])[0])
                 return self._json(res) if res else self._json({"error": "No such project."}, 404)
+            if path == "/api/erd":
+                res = app.erd((q.get("name") or [""])[0], (q.get("inferred") or ["1"])[0] != "0")
+                if not res:
+                    return self._json({"error": "No such project."}, 404)
+                from . import erd as erd_mod
+
+                return self._json({"model": res[0], "svg": erd_mod.to_svg(res[1]), "legend": erd_mod.LEGEND})
             if path == "/api/project":
                 res = app.summary((q.get("name") or [""])[0])
                 return self._json(res) if res else self._json({"error": "No such project."}, 404)
@@ -451,6 +476,22 @@ def make_handler(app: App, port: int):
                                        "sections": sorted(d["sections"])} for d in doc["documentation"]],
                     "data_dir": app.store.root})
             parts = path.strip("/").split("/")
+            if len(parts) == 3 and parts[0] == "download" and parts[2] in ("erd.svg", "erd.png"):
+                res = app.erd(parts[1], (q.get("inferred") or ["1"])[0] != "0")
+                if res and res[0]["tables"]:
+                    from . import erd as erd_mod
+
+                    stem = parts[1].replace(" ", "_") + "_ERD"
+                    if parts[2] == "erd.svg":
+                        data, ctype = erd_mod.to_svg(res[1]).encode("utf-8"), "image/svg+xml"
+                    else:
+                        with tempfile.TemporaryDirectory() as tmp:
+                            erd_mod.to_png(res[1], os.path.join(tmp, "e.png"))
+                            with open(os.path.join(tmp, "e.png"), "rb") as fh:
+                                data = fh.read()
+                        ctype = "image/png"
+                    return self._send(200, data, ctype, {"Content-Disposition": f'attachment; filename="{stem}.{parts[2][4:]}"'})
+                return self._json({"error": "No database tables to draw."}, 404)
             if len(parts) == 3 and parts[0] == "download" and parts[2] == "analysis":
                 res = app.gaps(parts[1])
                 if res:

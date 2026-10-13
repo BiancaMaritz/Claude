@@ -36,7 +36,8 @@ def main(argv=None) -> int:
     a = analyse(ex)
     title = args.title or os.path.splitext(os.path.basename(args.export.rstrip("/\\")))[0].replace("_", " ")
     blocks = build(ex, a, load_intake(args.intake), title=title,
-                   date=args.date or datetime.date.today().isoformat())
+                   date=args.date or datetime.date.today().isoformat(),
+                   extra={"media_dir": os.path.join(args.out, "media")})
 
     os.makedirs(args.out, exist_ok=True)
     fmts = {f.strip() for f in args.format.split(",")}

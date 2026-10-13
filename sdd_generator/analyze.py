@@ -147,6 +147,7 @@ def analyse_bot(bot) -> dict:
         "commands": Counter(), "calls": [], "vault": set(), "rest": [],
         "email": Counter(), "tables": defaultdict(lambda: {"ops": set(), "columns": set()}),
         "message_boxes": 0, "disabled": 0, "log_to_file": 0, "error_handlers": 0,
+        "sql": [], "connections": [], "var_refs": {},
     }
     for n, stack in walk(bot.nodes):
         pkg, cmd = n.get("packageName", ""), n.get("commandName", "")
@@ -181,8 +182,20 @@ def analyse_bot(bot) -> dict:
             d["log_to_file"] += 1
         elif pkg == "ErrorHandler" and cmd == "try":
             d["error_handlers"] += 1
+        rv = (n.get("returnTo") or {}).get("variableName")
+        if rv and cmd.startswith("assign"):  # a variable set from a vault entry, e.g. DatabaseName <- $@HerotelProdDatabaseName$
+            refs = VAULT_RE.findall(json.dumps(n.get("attributes", [])))
+            if refs:
+                d["var_refs"][rv] = refs[0]
+        if pkg == "Database" and cmd == "connect":
+            cred = ((attr(n, "connectionURLCV") or {}).get("credential") or {}).get("name")
+            if cred and cred not in d["connections"]:
+                d["connections"].append(cred)
         q = attr(n, "query")
         if pkg == "Database" and q:
+            from .sqlmodel import parse_sql  # imported here: sqlmodel does not need this module
+
+            d["sql"].append({"step": step_label(steps_above[-1]) if steps_above else "", "parsed": parse_sql(val(q))})
             ops, cols = sql_facts(val(q))
             for t, op in ops:
                 d["tables"][t]["ops"].add(op)

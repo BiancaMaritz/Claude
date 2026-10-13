@@ -11,7 +11,7 @@ import hashlib
 import os
 import re
 
-TABLE_EXT = (".csv", ".tsv", ".xlsx")
+TABLE_EXT = (".csv", ".tsv", ".xlsx", ".sql")
 SAMPLE_ROWS = 5000  # rows used to infer a column's type; every row is still counted
 MAX_COLUMNS = 500
 DATE_RES = [re.compile(p) for p in (
@@ -125,10 +125,11 @@ def _csv_table(path, label):
 
 
 def analyze_file(path, label):
-    """Return [{name, source, rows, columns, fp}] for a CSV/TSV (one table) or workbook (one per sheet)."""
+    """Return [{name, source, rows, columns, fp}] for a CSV/TSV (one table), a workbook (one per sheet) or a
+    SQL script (one per CREATE TABLE, with its keys under "ddl" and rows None)."""
     ext = os.path.splitext(label)[1].lower()
     if ext not in TABLE_EXT:
-        raise ValueError(f"{label}: tables must be .csv, .tsv or .xlsx.")
+        raise ValueError(f"{label}: tables must be .csv, .tsv, .xlsx or a .sql script.")
     stem = os.path.splitext(label)[0].strip()
     fp = _file_hash(path)
     out = []
@@ -159,8 +160,22 @@ def analyze_file(path, label):
                             "fp": hashlib.sha256((fp + body).encode()).hexdigest()})
         finally:
             wb.close()
+    elif ext == ".sql":
+        from .ddl import parse_ddl
+
+        raw = open(path, "rb").read()
+        # SQL Server Management Studio writes scripts as UTF-16 by default
+        text = raw.decode("utf-16") if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else raw.decode("utf-8-sig", errors="replace")
+        for t in parse_ddl(text):
+            tfp = hashlib.sha256(repr((t["name"], t["schema"], t["database"], t["columns"], t["pk"], t["fks"], t["unique"])).encode()).hexdigest()
+            out.append({"name": t["name"], "source": label, "rows": None, "fp": tfp,
+                        "columns": [{"name": c["name"], "type": c["type"], "nonnull": None} for c in t["columns"]],
+                        "ddl": {"schema": t["schema"], "database": t["database"], "pk": t["pk"], "fks": t["fks"],
+                                "unique": t["unique"], "nullable": {c["name"]: c["nullable"] for c in t["columns"]}, "fp": tfp}})
+        if not out:
+            raise ValueError(f"{label}: no CREATE TABLE statements found in the script.")
     else:
-        raise ValueError(f"{label}: tables must be .csv, .tsv or .xlsx.")
+        raise ValueError(f"{label}: tables must be .csv, .tsv, .xlsx or a .sql script.")
     if not out:
         raise ValueError(f"{label}: no table with a header row found.")
     return out

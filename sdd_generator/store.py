@@ -303,16 +303,30 @@ class Store:
         current = {t["name"]: t for t in doc["tables"]}
         for t in tables:
             t = dict(t, loaded_at=stamp)
-            old = before.get(t["name"])
+            tname = t["name"]
+            cur, old = current.get(tname), before.get(tname)
+            if t.get("ddl") and t["rows"] is None and cur is not None and cur.get("rows") is not None:
+                # a table definition for a table that already has an export: attach the keys to it
+                if (cur.get("ddl") or {}).get("fp") == t["ddl"]["fp"]:
+                    report["unchanged"].append(tname)
+                else:
+                    current[tname] = dict(cur, ddl=t["ddl"], loaded_at=stamp)
+                    (report["replaced"] if old else report["added"]).append(tname)
+                    if old:
+                        report["changes"][tname] = {"added": [], "removed": [], "retyped": [], "rows": [old["rows"], cur["rows"]],
+                                                   "note": "keys and types updated from the table script"}
+                continue
+            if not t.get("ddl") and cur is not None and cur.get("ddl"):
+                t["ddl"] = cur["ddl"]  # a refreshed export keeps the keys already loaded
             if old is None:
-                report["added"].append(t["name"])
+                report["added"].append(tname)
             elif old["fp"] == t["fp"]:
-                report["unchanged"].append(t["name"])
+                report["unchanged"].append(tname)
                 t = old  # nothing changed: keep the stored record as it is
             else:
-                report["replaced"].append(t["name"])
-                report["changes"][t["name"]] = diff_table(old, t)
-            current[t["name"]] = t
+                report["replaced"].append(tname)
+                report["changes"][tname] = diff_table(old, t)
+            current[tname] = t
         if mode == "overwrite":
             report["removed"] = sorted(set(before) - set(current))
         doc["tables"] = sorted(current.values(), key=lambda x: x["name"].lower())

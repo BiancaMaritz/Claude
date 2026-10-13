@@ -156,9 +156,11 @@ def build(ex: Export, a: dict, intake: dict, title=None, date=None, docs=None, e
     else:
         B.append(("p", "No SQL statements found in the bots."))
     B += _table_blocks(a, extra.get("tables", []), D)
+    B += _erd_blocks(a, extra)
     B += D.blocks("erd")
-    B.append(("todo", f"{TODO}: entity relationship diagram and key definitions"
-                      + (" (diagrams in documentation are not imported)." if D.has("erd") else ".")))
+    if not any(t.get("ddl") for t in extra.get("tables", [])):
+        B.append(("todo", f"{TODO}: primary and foreign key definitions"
+                          + (" (diagrams in documentation are not imported)." if D.has("erd") else ".")))
     B.append(("h", 2, "d. Business Rules"))
     br = intake.get("business_rules")
     if br:
@@ -361,7 +363,7 @@ def _table_blocks(a, tables, D):
            ("src", "From table exports: " + ", ".join(sorted({t["source"] for t in tables})) +
                    ". Column types are inferred from the data; no values are stored."),
            ("table", ["Table", "Rows", "Columns"],
-            [[t["name"], f"{t['rows']:,}", [f"{c['name']} ({c['type']})" for c in t["columns"]]] for t in tables])]
+            [[t["name"], f"{t['rows']:,}" if t.get("rows") is not None else "-", [f"{c['name']} ({c['type']})" for c in t["columns"]]] for t in tables])]
     exported = {_plain(t["name"]): t for t in tables}
     notes, unmatched = [], []
     for name, info in a["tables"].items():
@@ -380,6 +382,38 @@ def _table_blocks(a, tables, D):
     extra_tables = [t["name"] for k, t in exported.items() if k not in {_plain(n) for n in a["tables"]}]
     if extra_tables:
         out.append(("p", "Exported but not referenced by SQL in the code: " + ", ".join(sorted(extra_tables))))
+    return out
+
+
+def _erd_blocks(a, extra):
+    """Entity relationship diagram and relationship list, built from the SQL in the bots and any loaded schema script."""
+    from . import erd
+
+    tables = extra.get("tables", [])
+    m = erd.model(a, tables)
+    if not m["tables"]:
+        return []
+    sc = erd.scene(m)
+    media_dir = extra.get("erd_dir") or extra.get("media_dir")
+    img = {"path": "", "url": f"/download/{extra.get('project', '')}/erd.svg", "file": "erd.png", "svg": erd.to_svg(sc)}
+    if media_dir:
+        os.makedirs(media_dir, exist_ok=True)
+        img["path"] = erd.to_png(sc, os.path.join(media_dir, "erd.png"))
+    out = [("h", 3, "Entity relationship diagram"),
+           ("src", "Generated from the SQL in the bots" + (" and the schema script(s) loaded under Tables" if any(t.get("ddl") for t in tables) else "")
+                   + ". " + erd.LEGEND),
+           ("img", img, "Database tables used by the bots, the columns they use and how the tables relate")]
+    if not any(t.get("ddl") for t in tables):
+        out.append(("p", "No schema script is loaded, so no primary or foreign key is confirmed. Script the tables out of the "
+                         "database (schema only) and load the .sql file under Tables to draw the real keys."))
+    out.append(("table", ["Table", "Database", "Columns used", "Keys"],
+                [[t["name"], t["database"] + (f" ({t['database_note']})" if t["database_note"] else "") or "not stated",
+                  ", ".join(f"{c['name']} [{c['uses']}]" if c["uses"] else c["name"] for c in t["columns"]) or "none identified",
+                  ", ".join(f"{c['name']} {c['key']}" for c in t["columns"] if c["key"]) or "none confirmed"] for t in m["tables"]]))
+    if m["relations"]:
+        out.append(("table", ["From", "To", "Status", "Evidence"],
+                    [[f"{r['from']}.{r['from_col']}", f"{r['to']}.{r['to_col'] or '(key)'}",
+                      "Confirmed" if r["kind"] == "confirmed" else f"Inferred {CONFIRM}", r["evidence"]] for r in m["relations"]]))
     return out
 
 

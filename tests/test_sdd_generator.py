@@ -1,5 +1,6 @@
 import json
 import os
+import io
 import zipfile
 
 import pytest
@@ -300,7 +301,8 @@ def test_web_api(export_dir, client):
     d = json.loads(client.call("GET", "/api/doc?name=My%20Doc")[1])
     assert d["title"] == "T" and "A1" in d["html"] and d["menu"][0]["text"].startswith("1.")
     assert client.call("GET", "/download/My%20Doc/docx")[1][:2] == b"PK"
-    assert b"# T" in client.call("GET", "/download/My%20Doc/md")[1]
+    bundle = zipfile.ZipFile(io.BytesIO(client.call("GET", "/download/My%20Doc/md")[1]))   # the ERD picture makes it a bundle
+    assert b"# T" in bundle.read("SDD.md") and "media/erd.png" in bundle.namelist()
     for bad in ([("x.txt", b"hi")], [("bad.zip", b"not a zip")], [("m.json", b'{"files": []}')]):
         code, j = client.load("My Doc", bad)
         assert code == 400 and j["error"]
@@ -691,7 +693,7 @@ def test_sdd_places_graphs_videos_and_tables(export_dir, tmp_path):
     to_docx(blocks, str(tmp_path / "o.docx"))
     import docx
 
-    assert len(docx.Document(str(tmp_path / "o.docx")).inline_shapes) == 2
+    assert len(docx.Document(str(tmp_path / "o.docx")).inline_shapes) == 3  # two graphs and the ERD
     html = to_html(blocks)[1]
     assert '<img src="/media/P/g1"' in html
 
@@ -1105,3 +1107,156 @@ def test_non_bot_files_are_listed_not_dropped(export_dir, tmp_path):
     md = to_markdown(build(ex, analyse(ex), {}, title="T", date="x"))
     sec = md[md.index("#### Other files in the export"):md.index("### c. Triggers")]
     assert "| ContractForm | Form | Acme/Forms |" in sec and "Select Unit Process | Process |" in sec and "x.png" not in sec
+
+
+# ---- ERD ------------------------------------------------------------------------------------
+
+JOIN_SQL = ("SELECT c.CustomerId, c.Name, o.OrderId FROM $Db$.[dbo].[Customer] c JOIN $Db$.[dbo].[Orders] o "
+            "ON o.CustomerId = c.CustomerId WHERE o.Status = 'x'")
+SCHEMA = ("USE Sales;\nCREATE TABLE [dbo].[Customer]([CustomerId] [int] NOT NULL PRIMARY KEY, [Name] [varchar](50) NOT NULL);\n"
+          "CREATE TABLE [dbo].[Orders]([OrderId] [int] NOT NULL, [CustomerId] [int] NOT NULL, [Status] [varchar](5) NULL,\n"
+          " CONSTRAINT [PK_Orders] PRIMARY KEY ([OrderId]));\n"
+          "ALTER TABLE [dbo].[Orders] ADD CONSTRAINT [FK_O_C] FOREIGN KEY ([CustomerId]) REFERENCES [dbo].[Customer] ([CustomerId]);\n"
+          "CREATE TABLE [dbo].[Region]([RegionId] int PRIMARY KEY);\n")
+
+
+def _erd_analysis(*queries):
+    from sdd_generator.sqlmodel import parse_sql
+
+    return {"per": {"Bots/A": {"sql": [{"step": "", "parsed": parse_sql(q)} for q in queries], "connections": ["ProdConn"],
+                               "var_refs": {"Db": "$@ProdDb$"}}}}
+
+
+def _schema_tables(tmp_path):
+    from sdd_generator.tables import analyze_file
+
+    f = tmp_path / "schema.sql"
+    f.write_text(SCHEMA)
+    return analyze_file(str(f), "schema.sql")
+
+
+def test_sqlmodel_columns_uses_and_joins():
+    from sdd_generator.sqlmodel import parse_sql
+
+    p = parse_sql(JOIN_SQL + "; INSERT INTO [dbo].[Audit] ([Action], [At]) VALUES ('a', 'b'); UPDATE Orders SET Status = 'y' WHERE OrderId = 1")
+    assert p["tables"]["customer"]["cols"]["CustomerId"] == {"R", "J"}
+    assert p["tables"]["orders"]["cols"]["Status"] == {"F", "W"}
+    assert p["tables"]["audit"]["cols"] == {"Action": {"W"}, "At": {"W"}}
+    assert p["tables"]["customer"]["db"] == {"{Db}"} and p["joins"] == [("Orders", "CustomerId", "Customer", "CustomerId")]
+    assert "the" not in p["tables"]
+
+
+def test_ddl_keys_and_utf16_script(tmp_path):
+    from sdd_generator.ddl import parse_ddl
+    from sdd_generator.tables import analyze_file
+
+    t = {x["name"]: x for x in parse_ddl(SCHEMA)}
+    assert t["Customer"]["pk"] == ["CustomerId"] and t["Customer"]["database"] == "Sales"
+    assert t["Orders"]["pk"] == ["OrderId"] and t["Orders"]["fks"][0]["ref_table"] == "Customer"
+    assert [c["nullable"] for c in t["Orders"]["columns"]] == [False, False, True]
+    f = tmp_path / "u16.sql"
+    f.write_bytes(SCHEMA.encode("utf-16"))
+    got = analyze_file(str(f), "u16.sql")
+    assert {x["name"] for x in got} == {"Customer", "Orders", "Region"} and got[0]["rows"] is None
+    (tmp_path / "e.sql").write_text("-- nothing")
+    with pytest.raises(ValueError):
+        analyze_file(str(tmp_path / "e.sql"), "e.sql")
+
+
+def test_erd_model_without_schema_marks_guesses():
+    from sdd_generator import erd
+
+    m = erd.model(_erd_analysis(JOIN_SQL, "INSERT INTO [dbo].[Audit] ([Action], [OrderId]) VALUES ('a', 1)"))
+    by = {t["name"]: t for t in m["tables"]}
+    assert by["Customer"]["database"] == "{Db}" and by["Customer"]["database_note"] == "vault $@ProdDb$"
+    assert by["Customer"]["connections"] == ["ProdConn"]
+    assert {c["name"]: c["key"] for c in by["Customer"]["columns"]}["CustomerId"] == "key?"      # a guess, never PK
+    kinds = {(r["from"], r["to"]): r["kind"] for r in m["relations"]}
+    assert kinds[("Orders", "Customer")] == "confirmed" and kinds[("Orders", "Audit")] == "inferred"
+    assert erd.model(_erd_analysis(JOIN_SQL, "INSERT INTO [dbo].[Audit] ([Action], [OrderId]) VALUES ('a', 1)"), None, False)["relations"][0]["kind"] == "confirmed"
+
+
+def test_erd_model_with_schema_has_real_keys_and_context_tables(tmp_path):
+    from sdd_generator import erd
+
+    m = erd.model(_erd_analysis("SELECT o.OrderId FROM [dbo].[Orders] o WHERE o.Status = 'x'"), _schema_tables(tmp_path))
+    by = {t["name"]: t for t in m["tables"]}
+    assert "Region" not in by                                  # not used and not related to anything used
+    assert not by["Customer"]["used"] and by["Orders"]["database"] == "Sales"
+    keys = {c["name"]: c["key"] for c in by["Orders"]["columns"]}
+    assert keys == {"CustomerId": "FK", "OrderId": "PK", "Status": ""}
+    r = m["relations"][0]
+    assert (r["from"], r["to"], r["kind"], r["dir"]) == ("Orders", "Customer", "confirmed", "fk")
+    sc = erd.scene(m)
+    assert len(sc["boxes"]) == 2 and len(sc["edges"]) == 1 and sc["edges"][0]["from_mark"] == "N" and sc["edges"][0]["to_mark"] == "1"
+    assert next(b for b in sc["boxes"] if b["title"] == "Customer")["context"]
+
+
+def test_erd_renders_svg_and_png(tmp_path):
+    from sdd_generator import erd
+
+    m = erd.model(_erd_analysis(JOIN_SQL, "INSERT INTO [dbo].[<b>] ([x]) VALUES (1)"))
+    sc = erd.scene(m)
+    svg = erd.to_svg(sc)
+    assert svg.startswith("<svg") and "Customer" in svg and "&lt;b&gt;" in svg and "<b>" not in svg
+    out = erd.to_png(sc, str(tmp_path / "e.png"))
+    from PIL import Image
+
+    assert Image.open(out).size[0] > 400
+    assert erd.scene(erd.model({"per": {}}))["boxes"] == []
+
+
+def test_store_merges_schema_script_into_exports(tmp_path):
+    from sdd_generator.store import Store
+
+    store = Store(str(tmp_path / "docs"))
+    export = {"name": "Customer", "source": "c.csv", "rows": 5, "fp": "f1", "columns": [{"name": "CustomerId", "type": "int", "nonnull": 5}]}
+    store.load_tables("P", "add", [export], ["c.csv"])
+    r = store.load_tables("P", "add", _schema_tables(tmp_path), ["schema.sql"])
+    assert r["added"] == ["Orders", "Region"] and r["replaced"] == ["Customer"] and r["unchanged"] == []   # Customer gains its keys
+    tabs = {t["name"]: t for t in store.get("P")["tables"]}
+    assert tabs["Customer"]["rows"] == 5 and tabs["Customer"]["ddl"]["pk"] == ["CustomerId"]    # keys attached, rows kept
+    assert tabs["Orders"]["rows"] is None
+    again = store.load_tables("P", "add", _schema_tables(tmp_path), ["schema.sql"])
+    assert again["noop"]
+    store.load_tables("P", "add", [dict(export, fp="f2", rows=9)], ["c.csv"])       # a newer export keeps the keys
+    assert store.get("P")["tables"][0]["rows"] == 9 and store.get("P")["tables"][0]["ddl"]["pk"] == ["CustomerId"]
+
+
+def test_sdd_has_erd_picture_and_relationships(export_dir, tmp_path):
+    from sdd_generator.analyze import analyse
+    from sdd_generator.loader import load_export
+    from sdd_generator.render import to_docx, to_html, to_markdown
+
+    ex = load_export(str(export_dir))
+    media = tmp_path / "media"
+    extra = {"tables": _schema_tables(tmp_path), "media_dir": str(media), "project": "P"}
+    blocks = build(ex, analyse(ex), {}, title="T", date="x", extra=extra)
+    md = to_markdown(blocks)
+    erd_part = md[md.index("### c. ERD Design"):md.index("### d. Business Rules")]
+    assert "Entity relationship diagram" in erd_part and "![" in erd_part and "media/erd.png" in erd_part
+    assert (media / "erd.png").exists() and "primary and foreign key definitions" not in erd_part
+    assert "Jobs" in erd_part and "Status [" in erd_part
+    to_docx(blocks, str(tmp_path / "o.docx"))
+    import docx
+
+    assert len(docx.Document(str(tmp_path / "o.docx")).inline_shapes) == 1
+    assert "<svg" in to_html(blocks)[1]
+    bare = to_markdown(build(ex, analyse(ex), {}, title="T", date="x"))
+    assert "primary and foreign key definitions" in bare and "No schema script is loaded" in bare
+
+
+def test_erd_endpoints(export_dir, tmp_path, client):
+    client.load("P", [("a.zip", zip_of(export_dir))])
+    code, body = client.call("GET", "/api/erd?name=P")
+    j = json.loads(body)
+    assert code == 200 and any(t["name"] == "Jobs" for t in j["model"]["tables"]) and j["svg"].startswith("<svg")
+    assert client.call("GET", "/api/erd?name=Nope")[0] == 404
+    assert client.call("GET", "/download/P/erd.svg")[1].startswith(b"<svg")
+    assert client.call("GET", "/download/P/erd.png")[1][:4] == b"\x89PNG"
+    code, tok = client.stage("schema.sql", SCHEMA.encode())
+    code, body = client.call("POST", "/api/tables/load", json.dumps({"doc": "P", "mode": "add", "staged": [tok["token"]]}).encode(),
+                             {"Content-Type": "application/json"})
+    assert code == 200 and len(json.loads(body)["report"]["added"]) == 3
+    info = json.loads(client.call("GET", "/api/project?name=P")[1])
+    assert info["tables"][0]["rows"] is None

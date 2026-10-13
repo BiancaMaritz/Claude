@@ -64,7 +64,7 @@ taskkill /PID <number in the last column> /F
 | SDD section | Source |
 |---|---|
 | 2a Process flow steps | Named Step actions in each entry-point bot |
-| 2c ERD | Tables and written columns from SQL in Database actions |
+| 2c ERD | Diagram (PNG in Word and Markdown, SVG in the app) of the tables and columns the SQL uses, with database name and relationships; keys from a loaded schema script |
 | 3a Applications and systems | Packages in use, plus `<name> Login` bots |
 | 3b Bot components | Manifest paths, runTask calls, folder-based roles |
 | 3c Triggers | Entry points only; schedules are not in an export |
@@ -73,6 +73,15 @@ taskkill /PID <number in the last column> /F
 | Appendices | Decision points, vault reference names, package versions, review findings, developer comments |
 
 Sections 1, 2b, 2d and 2e are business content. Supply them through `--intake` (see `intake.example.json`); otherwise they stay as highlighted `[TO BE COMPLETED]` placeholders. Access levels, bot usernames, trigger types and complexity stay as `[CONFIRM]`.
+
+## The ERD picture
+
+Tables, the columns the bots use and how (W written, R read, F filtered, J joined) come from the SQL in the bots. Under Tables you can download the diagram as SVG or PNG; the same picture goes into section 2c of the Word and Markdown output.
+
+- Database name: shown when the SQL or a loaded schema script spells it out. When the bot takes it from a variable (for example `{DatabaseName}`), the variable and its vault entry name are shown. Vault values are never read.
+- Keys: a bot export contains no primary or foreign keys, and neither does a CSV export. Script the tables out of the database (SQL Server Management Studio: Tasks, Generate Scripts, schema only) and load the `.sql` file under Tables. PK and FK are then drawn for real. Without it, a column such as `CustomerId` is marked `key?`, which is a guess from its name.
+- Relationships: a solid line is confirmed, by a foreign key in the schema script or by a SQL join in a bot. A dashed line is inferred from two tables sharing an id-like column name and needs a human to confirm it. A checkbox hides the dashed lines.
+- Tables that a foreign key points to but no bot uses appear with a grey header.
 
 ## Rules worth knowing
 

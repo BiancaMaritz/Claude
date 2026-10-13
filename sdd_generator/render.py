@@ -218,8 +218,8 @@ def to_html(blocks):
                 if cur[lvl]:
                     cur[lvl]["docs"] = cur[lvl].get("docs", 0) + 1
         elif k == "img":
-            out.append(f'<figure><img src="{_html.escape(b[1]["url"], quote=True)}" alt="{_html.escape(b[2], quote=True)}">'
-                       f"<figcaption>{_h(b[2])}</figcaption></figure>")
+            shown = b[1]["svg"] if b[1].get("svg") else f'<img src="{_html.escape(b[1]["url"], quote=True)}" alt="{_html.escape(b[2], quote=True)}">'
+            out.append(f'<figure class="{"wide" if b[1].get("svg") else ""}">{shown}<figcaption>{_h(b[2])}</figcaption></figure>')
         elif k in ("p", "todo"):
             out.append(f"<p>{_h(b[1])}</p>")
             todo = len(PLACEHOLDER.findall(str(b[1])))
